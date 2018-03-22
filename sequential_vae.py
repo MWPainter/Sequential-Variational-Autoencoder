@@ -3,236 +3,440 @@ from scipy import misc
 
 
 class SequentialVAE(Network):
-    def __init__(self, dataset, batch_size, name=None):
-        Network.__init__(self, dataset)
-        if name is None or name == "":
-            self.name = "sequential_vae_%s" % dataset.name
-        else:
-            self.name = name
+    """
+    Implementation of SequentialVAE, extending our abstract Network class.
+
+    Description:
+    TODO: Add a full description of what this code will/does do
+    TODO: define p_data, q(z|x), p(x|z), x_i, z_i and so on
+    TODO: describe the relations between each of them
+    TODO: When we can add different descriptions for different modules
+    TODO: Reference variational ladder auto encoder + define notation there + describe its usage in our SeqVAE
+    TODO: explain the the output of encoder is a mean and variance (so a probability distribution)
+    TODO: explain that the output of the decoder is an x, and that implicitly defines 
+
+
+    Work to be done:
+    ---THU---
+    TODO: debug this code and double check that it actually works...
+    TODO: run tensorboard + check resnet weights being used
+    TODO: Try with very low capacity networks + try with much higher capacity networks
+    +++++
+    TODO: Add a debug flag
+    TODO: Add more tensorboard for debugging (e.g. ratio of update magnitude to weight magnitude + weight of regularization term vs reconstruction + all things had in 273b/suggested by 231n)
+    <Just copy over>
+    +++++
+    Somehow check that the 
+    DUBUG PRINT all of the variables
+
+    ---SAT---
+    TODO: Add variable length MCs for training and for testing too
+    TODO: Update self.steps (specify that we should set it to None to specify this)
+
+    ---MON---
+    TODO: (Should cover the below 5 todos) Update the networks to add the extra dependencies and try out all of the combinations in our draft math
+    TODO: (Should cover the below 5 todos) Update the loss functions according to the draft math
+    TODO: ADD tensorboard variables to look at each of these additional loss functions + be able to tell how much of a difference it is making
+
+    TODO: Add an extra objective to maximize the jensens inequality error term when predicting the loss of the reconstruction
+    TODO: -> this is basically adding the dependence between z's? Look at original code when doing this "use_latent_pred", "condition" and "latent_pred" stuff
+    TODO: Check math is consistent with vlae math (justify the differences)
+    TODO: Explicitly try decorrelating the z's as suggested to me
+    TODO: this section is essentially making the latent code depend on x or (x and z_i's) or (x and z_i's and x_j's) etc
+    TODO: Compare what I want to do (optimize to maximize error term in Jenson's) 
+
+
+    TODO: Additional debugging stuff -> allow different sizes of convolution in the ladders, print warnings if something goes weird
+            (Compute the next image size and stride and filter size etc from what was specified)
+
+    ---Further---
+    TODO: With the additional objective function, that should just update phi and not theta?
+
+    TODO: Try the different combinations of parameter sharing, try to work out the effect on each
+
+    TODO: Try to investigate the different ways that the latent space could be modelled
+    TODO: Try a prior of uniform (or a wide gaussian) on z_i, and then hopefully q_psi(z_i|z_<i,x_i-1) can be a very specific gaussian with different mu and sigma's
+    TODO: try to experiment more with the latent space being a mixture of gaussians (try to make the prob distr very spiky?)
+
+    TODO: as we are using a chain, maybe we can output a varience from the decoder, and that can provide some useful information
+
+    TODO: Analysis framework -> producing graphs etc SeaBorne etc (graph of reconstruction loss + values of the "error terms etc")
+    """
+    def __init__(self, dataset, batch_size, name, logger):
+        """
+        Initialization of the network, defines parameters and constructs the network in tenforflow
+        SEE ALSO: __init__ from abstract_network.py, which defines our superclass 'Network'
+
+        Description of parameters defined:
+        (VLAE params)
+        self.vlae_levels = the number of levels in each VLAE used in the seqvae
+                    technically, "one level" here is two convolutional layers, which reduce the image size by half (step sizes of 2 then 1)
+                    (the last level has a fully connected layer too)
+        self.vlae_latent_dims = a list of the number of dimensions in the latent space for each part of the ladder in the vlae
+        self.image_sizes = the size of the "intermediate images". A list of 'self.vlae_levels + 1' integers.
+        self.filter_sizes = the size of the filters. A list of length 'self.vlae_levels + 2', as there are 'self.VLAE_levels + 1' 
+                    intermediate representations (including input) and we have two for the output level (includes a fully connected layer)
+
+        (SeqVAE params)
+        self.share_recognition_params = should each recognition network, q_phi(z_i|x_i), share parameters phi?
+        self.share_generative_params = should each generative network, p_theta(x_i+1|z_i), share parameters theta?
+        self.share_encoder_params = should the encoder networks (x->z_t and x_t-1,_ ->x_t) share parameters?
+        self.share_latent_code_params = should each latent code network, q_psi(z_i|x) share parameters psi?
+        self.inference = the recognition network to use (currently just VLAE's recognition network is an option)
+                    N.B. self.inference is a functional value
+        self.generator = the generator network to use (currently just VLAE's generator is an option)
+                    N.B. self.generator is a functional value
+        self.mc_steps = the number of steps to use in the markov chain
+        self.latent_dim = the dimension of the latent spaces (i.e. the number of dimensions z_i has for EACH i)
+        self.intermediate_reconstruction = if each x_i should be a reconstruction of x. (If we should add a reconstruction loss for each x_i)
+        self.combine_noise_method = 'concat'/'add'/'gated_add', and specifies how to add in (latent) noise into the embeddings of the autoencoder 
+                    (see combined_noise for more detail)
+
+        'self.combine_noise_method' should take one of the following values:
+        "concat": Concatenate the noise onto the embeddings
+        "add": directly add the noise and the embeddings
+        "gated_add": multiply the noise by a (trainable) variable, and then add
+
+        (Hyperparams)
+        self.learning_rate = the learning rate to use during training
+        self.reg_coeff_rate = decides the rate of which we increase the (coefficient of) regularization on latent variables from 0 to 1 over time
+
+        (Training params)
+        self.save_freq = how frequently to save the network during training
+        self.tb_summary_freq = how frequently to write summaries to tensorboard
+
+        :param dataset: the dataset that we will be training this network on 
+                        (implicitly defining the p_data we wish to model)
+        :param batch_size: the batch size to use during training
+        :param name: the name we are allocating this instand of the seqvae network 
+        :param logger: a logger object, for logging 
+        :return: None
+        """
+        Network.__init__(self, dataset, logger)
+
         self.dataset = dataset
         self.batch_size = batch_size
         self.data_dims = dataset.data_dims
+        self.name = name
+        self.LOG = logger
 
-        self.fs = [self.data_dims[0], self.data_dims[0] // 2, self.data_dims[0] // 4, self.data_dims[0] // 8,
-                   self.data_dims[0] // 16]
-        # Increasing this is generally beneficial if you have more memory
-        self.cs = [self.data_dims[-1], 48, 96, 192, 384, 512]
+        # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
+        self.vlae_levels = 4
+        self.vlae_latent_dims = [10, 10, 10, 10]
+        self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
+                            self.data_dims[0] // 4, self.data_dims[0] // 8,
+                            self.data_dims[0] // 16]
+        self.filter_sizes = [self.data_dims[-1], 48, 96, 192, 384, 512]
 
-        # Share weights between generator steps. Set this to true for homogeneous Markov chain.
-        self.share = False
-        # Because the latent samples q(z_1, ..., z_T) are not independent. This explicitly models that dependence.
-        # In general this gives a marginal improvement on sample quality
-        self.use_latent_pred = False
-        # Some external information to condition on.
-        # For example this can do conditional generation given label information
-        # To activate, replace this with a placeholder.
-        # Supply the value for that placeholder during both training and sampling
-        self.condition = None
-        # Use intermediate reconstruction
+        # SeqVAE parameters 
+        self.share_recognition_params = False
+        self.share_generative_params = False
+        self.share_encoder_params = False
+        self.share_latent_code_params = False
+        self.inference = self.inference_ladder 
+        self.generator = self.generator_ladder 
+        self.mc_steps = 8
+        self.latent_dim = np.sum(self.vlae_latent_dims)
         self.intermediate_reconstruction = True
+        self.combine_noise_method = "concat"
 
-        # Configuration for different netnames. Add your own if needed
-        if self.name == "sequential_vae_celebA":
-            self.ladder_dims = [10, 10, 10, 10]
-            self.latent_dim = np.sum(self.ladder_dims)
-            self.steps = 8
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
-        elif self.name == "sequential_vae_celebA_pred":
-            self.ladder_dims = [10, 10, 10, 10]
-            self.latent_dim = np.sum(self.ladder_dims)
-            self.steps = 8
-            self.use_latent_pred = True
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
+        # Hyperparams and training params
+        self.learning_rate = 0.0002
+        self.reg_coeff_rate = 5000.0 # 1 epoch = 1000
+        self.save_freq = 2000
+        self.tb_summary_freq = 100
+
+        # Config for different netnames, where customization is needed.
+        # add overides for any of the above parameters here
+        if self.name == "sequential_vae_celebA_inhomog":
+            # nothing
+            pass
+
+        elif self.name == "sequential_vae_celebA_homog":
+            self.share_generative_params = True
+
         elif self.name == "sequential_vae_lsun":
-            self.ladder_dims = [20, 30, 30, 30]
-            self.latent_dim = np.sum(self.ladder_dims)
-            self.steps = 8
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
+            self.vlae_latent_dims = [20, 30, 30, 30]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+
         elif self.name == "sequential_vae_lsun_single":
-            self.ladder_dims = [160, 240, 240, 240]
-            self.latent_dim = np.sum(self.ladder_dims)
-            self.steps = 1
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
+            self.vlae_latent_dims = [160, 240, 240, 240]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.mc_steps = 1
+
         elif self.name == "sequential_vae_lsun_final":
-            self.ladder_dims = [20, 30, 30, 30]
-            self.cs = [self.data_dims[-1], 32, 64, 128, 384, 512]
-            self.latent_dim = np.sum(self.ladder_dims)
-            self.steps = 8
+            self.vlae_latent_dims = [20, 30, 30, 30]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
             self.intermediate_reconstruction = False
+
+        # Latent pred not yet refactored back in
+        # elif self.name == "sequential_vae_lsun_pred":
+        #     self.filter_sizes = [self.data_dims[-1], 64, 128, 256, 512, 1024]
+        #     self.vlae_latent_dims = [20, 20, 20, 20]
+        #     self.latent_dim = np.sum(self.ladder_dims)
+        #     self.use_latent_pred = True
+
+        # python main.py --dataset=mnist --plot_reconstruction --netname=sequential_vae_mnist_inhomog
+        elif self.name == "sequential_vae_mnist_inhomog":
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [8, 8, 8]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.steps = 5
             self.generator = self.generator_ladder
             self.inference = self.inference_ladder
-        elif self.name == "sequential_vae_lsun_pred":
-            self.cs = [self.data_dims[-1], 64, 128, 256, 512, 1024]
-            self.ladder_dims = [20, 20, 20, 20]
-            self.latent_dim = np.sum(self.ladder_dims)
-            self.steps = 8
-            self.use_latent_pred = True
+
+        elif self.name == "sequential_vae_mnist_homog":
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [8, 8, 8]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.steps = 5
             self.generator = self.generator_ladder
             self.inference = self.inference_ladder
+            self.share_generative_params = True
+
+        elif self.name == "sequential_vae_mnist_share_all":
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [8, 8, 8]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.steps = 5
+            self.generator = self.generator_ladder
+            self.inference = self.inference_ladder
+            self.share_generative_params = True
+            self.share_recognition_params = True
+
         else:
-            print("Unknown network name %s" % self.name)
+            self.LOG.error("Unknown network name %s" % self.name)
             exit(-1)
-
-        self.input_placeholder = tf.placeholder(shape=[None]+self.data_dims, dtype=tf.float32, name="input_placeholder")
-        self.target_placeholder = tf.placeholder(shape=[None]+self.data_dims, dtype=tf.float32, name="target_placeholder")
-
-        self.reg_coeff = tf.placeholder_with_default(1.0, shape=[], name="regularization_coeff")
-        self.latents = []
-        self.tsamples = []
-        self.gsamples = []
-        self.regularization = 0.0
-        self.loss = 0.0
-        self.final_loss = None
-        tsample = None
-        gsample = None
-        latent_mean_pred, latent_stddev_pred = None, None
-        glatent_mean_pred, glatent_stddev_pred = None, None
-        for step in range(self.steps):
-            latent_placeholder = tf.placeholder(shape=[None, self.latent_dim], dtype=tf.float32, name="latent_ph%d" % step)
-            self.latents.append(latent_placeholder)
-            if step == 0:
-                gsample = tf.random_uniform(shape=tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims))
-                self.gsamples.append(gsample)
-
-            latent_mean, latent_stddev = self.inference(self.input_placeholder, step)
-            latent_sample = latent_mean + tf.multiply(latent_stddev,
-                                                 tf.random_normal(tf.stack([tf.shape(self.input_placeholder)[0], self.latent_dim])))
-
-            # Predict the latent state of the next step.
-            # This can be used to explicitly capture dependence between latent code
-            if latent_mean_pred is not None:
-                pred_loss = tf.log(latent_stddev_pred) - tf.log(latent_stddev) + \
-                            tf.div(tf.square(latent_stddev), 2 * tf.square(latent_stddev_pred)) + \
-                            tf.div(tf.square(latent_mean - latent_mean_pred), 2 * tf.square(latent_stddev_pred))
-                pred_loss = tf.reduce_sum(pred_loss) / self.batch_size - 0.5 * self.latent_dim
-                tf.summary.scalar("latent_pred_loss%d" % step, pred_loss)
-                self.loss += pred_loss
-
-            # If we make a prediction then transform input white Gaussian to the Gaussian we predicted
-            if glatent_mean_pred is not None:
-                external_latent = glatent_mean_pred + tf.multiply(glatent_stddev_pred, latent_placeholder)
-            else:
-                external_latent = latent_placeholder
-
-            # Obtain prediction for next step
-            if self.use_latent_pred:
-                if self.share:
-                    latent_mean_pred, latent_stddev_pred = \
-                        self.latent_code_generator(latent_sample, step=None, reuse=(step != 0), condition=self.condition)
-                    glatent_mean_pred, glatent_stddev_pred = \
-                        self.latent_code_generator(external_latent, step=None, reuse=True, condition=self.condition)
-                else:
-                    latent_mean_pred, latent_stddev_pred = \
-                        self.latent_code_generator(latent_sample, step=step, condition=self.condition)
-                    glatent_mean_pred, glatent_stddev_pred = \
-                        self.latent_code_generator(external_latent, step=step, reuse=True, condition=self.condition)
-            # Generate samples
-            if step == 0:
-                tsample = self.generator(None, latent_sample, step, condition=self.condition)
-                gsample = self.generator(None, external_latent, step, reuse=True, condition=self.condition)
-            else:
-                if self.share:
-                    tsample, ratio = self.generator(tsample, latent_sample, None, reuse=(step != 1), condition=self.condition)
-                    gsample, _ = self.generator(gsample, external_latent, None, reuse=True, condition=self.condition)
-                else:
-                    tsample, ratio = self.generator(tsample, latent_sample, step, condition=self.condition)
-                    gsample, _ = self.generator(gsample, external_latent, step, reuse=True, condition=self.condition)
-                tf.summary.scalar("resnet_gate_weight%d" % step, tf.reduce_mean(ratio))
-            self.tsamples.append(tsample)
-            self.gsamples.append(gsample)
-
-            const1 = math.log(math.sqrt(2 * math.pi))
-            const2 = math.log(math.sqrt(2 * math.pi * math.e))
-            regularization_loss = tf.reduce_sum(-tf.log(latent_stddev) +
-                                                0.5 * tf.square(latent_stddev) +
-                                                0.5 * tf.square(latent_mean)) / self.batch_size - const2 + const1
-            step_loss = tf.reduce_sum(tf.square(tsample - self.target_placeholder)) / self.batch_size
-            if self.intermediate_reconstruction or step == self.steps - 1:
-                self.loss += 16 * step_loss + regularization_loss * self.reg_coeff
-            else:
-                self.loss += regularization_loss * self.reg_coeff
-            self.final_loss = step_loss
-
-            tf.summary.scalar("reconstruction_loss%d" % step, step_loss)
-            tf.summary.scalar("regularization_loss%d" % step, regularization_loss)
-            if self.intermediate_reconstruction:
-                tsample = tf.stop_gradient(tsample)
-        tf.summary.scalar("loss", self.loss)
-
-        self.merged_summary = tf.summary.merge_all()
-        self.iteration = 0
-        # gen_vars = [var for var in tf.global_variables() if 'generative' in var.name]
-        self.train_op = tf.train.AdamOptimizer(0.0002).minimize(self.loss)
-
-        self.init_network(restart=False)
+    
+        # Construct initialize and print network
+        self.construct_network()
+        self.init_network()
         self.print_network()
-        self.read_only = False
 
+        # stuff for figures
         self.mc_fig, self.mc_ax = None, None
 
-    def train(self, batch_input, batch_target, condition=None):
+
+
+
+
+    def construct_network(self):
+        """
+        Construct the network, using 'self.inference' and 'self.generator'. This network will produce
+        the sequence of samples and latent random variables.
+
+        Tensorflow variables defined here:
+        self.input_placeholder = placeholder for the input image (= the target image + optional noise)
+        self.target_placeholder =  placeholder for the target image (= input image, without any noise)
+        self.reg_coeff = placeholder (with default value) for the coefficient of regularization
+        
+        self.latents = placeholders for latent variables, use these when we want to use the network generatively
+        self.training_samples = samples generated along the chain, use these one's when training the network
+                    this uses a latent variable that's sampled using the mean and stddev from inference network of the previous sample
+        self.generator_samples = samples generated along the chaing, use these one's when running the generatively
+                    this uses the latent variable fed into the placeholder in self.latents
+
+        N.B. Although when making the generator and training sample variables, we make two seperate 
+        calls to 'self.generator', parameter sharing (through variable scopes) 
+    
+        self.loss = the total loss, the value that sums all of the lasses from each stage in the network and which we optimize over
+        self.final_loss = the loss of the final sample (i.e. the output of the markov chain). i.e. how good our performance is
+
+        self.merged_summaries = a tensorflow op, which combines all previous tensorboard summaries, so we can run all of them at the same time (in a tf session)
+        self.train_op = the tensorflow training op
+        """
+        self.input_placeholder = tf.placeholder(shape=[None]+self.data_dims, dtype=tf.float32, name="input_placeholder")
+        self.target_placeholder = tf.placeholder(shape=[None]+self.data_dims, dtype=tf.float32, name="target_placeholder")
+        self.reg_coeff = tf.placeholder_with_default(1.0, shape=[], name="regularization_coefficient")
+
+        self.latents = []
+        self.training_samples = []
+        self.generator_samples = []
+
+        self.loss = 0.0
+        self.final_loss = None
+
+        training_sample = None
+        generator_sample = None
+
+        for step in range(self.mc_steps):
+            # Create placeholder for latent variable on this step. i.e. z_i
+            latent_placeholder = tf.placeholder(shape=[None, self.latent_dim], dtype=tf.float32, name=("latent_placeholder_%d" % step))
+            self.latents.append(latent_placeholder)
+
+            # On the first step, let x_0 be uniform random noise
+            if step == 0:
+                generator_sample = tf.random_uniform(shape=tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims))
+                self.generator_samples.append(generator_sample)
+
+            # Run the recognition network (encoder) to get mean and stddev of z_i. then sample a z_i
+            latent_mean, latent_stddev = self.inference(self.input_placeholder, step)
+            latent_sample = latent_mean + tf.multiply(latent_stddev, 
+                                                tf.random_normal(tf.stack([tf.shape(self.input_placeholder)[0], self.latent_dim])))
+
+            # Generate the next sample. Make two different variables (using the same networks with different inputs) for training/generation
+            # And keep track of (tensorboard summaries) the residual connection weights (for debugging)
+            # In inhomogenous case, generator_samples need to share params from training. (just this time step)
+            # If self.share_generative_params == True, then we share all of them automatically anyway (across all time steps)
+            if step == 0:
+                training_sample = self.generator(None, latent_sample, step)
+                generator_sample = self.generator(None, latent_placeholder, step, reuse=True)
+            else:
+                training_sample, resnet_ratios = self.generator(training_sample, latent_sample, step)
+                generator_sample, _ = self.generator(generator_sample, latent_placeholder, step, reuse=True)
+                tf.summary.scalar("resnet_gate_weight_step_%d" % step, tf.reduce_mean(resnet_ratios))
+            self.training_samples.append(training_sample)
+            self.generator_samples.append(generator_sample)
+
+            # Construct the loss for this step. (KL distance for regularizing the latent code and squared reconstruction loss for sample)
+            reconstruction_loss = tf.reduce_mean(tf.square(training_sample - self.target_placeholder))
+            regularization_loss = -0.5 * self.latent_dim + tf.reduce_mean(-tf.log(latent_stddev) +
+                                                0.5 * tf.square(latent_stddev) +
+                                                0.5 * tf.square(latent_mean)) 
+
+            # Add to the overall loss
+            if self.intermediate_reconstruction or step == self.mc_steps-1:
+                self.loss += 16 * reconstruction_loss 
+            self.loss += self.reg_coeff * regularization_loss
+
+            # Keep track of the final reconstruction error (we just set this each time)
+            self.final_loss = reconstruction_loss
+
+            # Add tensorboards summaries for the losses at this step
+            tf.summary.scalar("reconstruction_loss_step_%d" % step, reconstruction_loss)
+            tf.summary.scalar("regularization_loss_step_%d" % step, regularization_loss)
+
+            # Finally, prevent gradients from propogating between the different samples, if each encoder/decoder have their own losses
+            if self.intermediate_reconstruction:
+                training_sample = tf.stop_gradient(training_sample)
+
+        # Add tensorboard summary for the loss
+        tf.summary.scalar("loss", self.loss)
+
+        # Group all summaries into one variable we can keep hold of 
+        self.merged_summary = tf.summary.merge_all()
+
+        # Finally, make the train op (the optimizer)
+        self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+
+
+
+
+
+    def train(self, batch_input, batch_target):
+        """
+        Perofrm ONE training update. (This is called from the main training loop in trainer.py)
+        Also this will 
+
+        :param batch_input: The input to the network for training
+        :param batch_target: The target for the network (batch_target = batch_input - (noise if any))
+        :return: The reconstruction loss of the FINAL sample (i.e. how well did the network do this time?)
+        """
         self.iteration += 1
+
+        # run values through our session 
         feed_dict = {self.input_placeholder: batch_input,
-                     self.reg_coeff: 1 - math.exp(-self.iteration / 10000.0),
+                     self.reg_coeff: 1 - math.exp(-self.iteration / self.reg_coeff_rate),
                      self.target_placeholder: batch_target}
-        if self.condition is not None:
-            feed_dict[self.condition] = condition
-        train_return = self.sess.run([self.train_op, self.loss, self.final_loss], feed_dict=feed_dict)
-        if self.iteration % 2000 == 0:
+        _, _, final_reconstruction_loss = self.sess.run([self.train_op, self.loss, self.final_loss], feed_dict=feed_dict)
+
+        # Occasionally save the network params + write summaries to tensorboard
+        if self.iteration % self.save_freq == 0:
             self.save_network()
-        if self.iteration % 100 == 0:
+        if self.iteration % self.tb_summary_freq == 0:
             summary = self.sess.run(self.merged_summary, feed_dict=feed_dict)
             self.writer.add_summary(summary, self.iteration)
-        return train_return[2] / self.data_dims[0] / self.data_dims[1]
 
-    def test(self, batch_input, condition=None):
+        # return the final reconstruction loss (averaged per pixel)
+        return final_reconstruction_loss / self.data_dims[0] / self.data_dims[1]
+
+
+
+
+
+    def test(self, batch_input):
+        """
+        Runs the training network, 
+
+        :param batch_input: The input to the network, noise that we want to turn into nice images
+        :return: The final output of the SeqVAE network, i.e. the generated image
+        """
         feed_dict = {self.input_placeholder: batch_input}
-        if self.condition is not None:
-            feed_dict[self.condition] = condition
-        train_return = self.sess.run(self.tsamples[-1],
-                                     feed_dict=feed_dict)
-        return train_return
+        generated_image = self.sess.run(self.training_samples[-1], feed_dict=feed_dict)
+        return generated_image
 
-    def random_latent_code(self):
-        pass
 
-    def generate_mc_samples(self, batch_input, batch_size=None, condition=None):
+
+
+
+    def generate_mc_samples(self, batch_input, batch_size=None):
+        """
+        Run the network in a generative mede. Generate sample from a normal distribution and feed 
+        them into the network (as the latent variables). To run the generative part(s) of the network
+        we run the self.generator_samples tf ops.
+
+        N.B. This isn't used for optimization, just for visualization.
+
+        :param batch_input: the input to the network (random noise) (None => use self.batch_size)
+        :param batch_size: the size of the back
+        :return: The generated samples from running the network in generative mode
+        """
         if batch_size is None:
             batch_size = self.batch_size
-        feed_dict = dict()
-        if self.condition is not None:
-            feed_dict[self.condition] = condition
 
-        for i in range(self.steps):
+        feed_dict = dict()
+        feed_dict[self.input_placeholder] = batch_input
+        for i in range(self.mc_steps):
             feed_dict[self.latents[i]] = np.random.normal(size=(batch_size, self.latent_dim))
-        # This is needed because for some versions batch_norm requires input from shared weight networks
-        feed_dict[self.input_placeholder] = batch_input
-        output = self.sess.run(self.gsamples, feed_dict=feed_dict)
+
+        output = self.sess.run(self.generator_samples, feed_dict=feed_dict)
         return output
 
-    def conditioned_mc_samples(self, batch_input, condition=None):
+
+
+
+
+    def training_mc_samples(self, batch_input):
+        """ 
+        Run the network to generate samples in the training mode. To run the training part(s) 
+        of the network we run the self.training_samples tf ops.
+
+        N.B. This isn't used for optimization, just for visualization.
+
+        :param batch_input: the input to the network (samples from the training set)
+        :return: The generated samples from running the network in training mode
+        """
         feed_dict = dict()
-        if self.condition is not None:
-            feed_dict[self.condition] = condition
         feed_dict[self.input_placeholder] = batch_input
-        output = self.sess.run(self.tsamples, feed_dict=feed_dict)
+        output = self.sess.run(self.training_samples, feed_dict=feed_dict)
         return output
 
-    def visualize(self, epoch, batch_size=10, condition=None, use_gui=True):
+
+
+
+
+    def visualize(self, epoch, batch_size=10, use_gui=True):
+        """
+        Creates a visualization of the markov chain. 
+        (Calls generate_mc_samples and training_mc_samples).
+        """
         if use_gui is True and self.mc_fig is None:
             self.mc_fig, self.mc_ax = plt.subplots(1, 2)
 
         for i in range(2):
             if i == 0:
                 bx = self.dataset.next_batch(batch_size)
-                z = self.generate_mc_samples(bx, batch_size, condition=condition)
+                z = self.generate_mc_samples(bx, batch_size)
             else:
                 bx = self.dataset.next_batch(batch_size)
-                z = self.conditioned_mc_samples(bx, condition=condition)
+                z = self.training_mc_samples(bx)
                 z = [bx] + z
             v = np.zeros([z[0].shape[0] * self.data_dims[0], len(z) * self.data_dims[1], self.data_dims[2]])
             for b in range(0, z[0].shape[0]):
@@ -269,140 +473,260 @@ class SequentialVAE(Network):
             plt.draw()
             plt.pause(0.01)
 
-    def latent_code_generator(self, latent, condition=None, step=None, reuse=False):
-        if step is None:
-            scope_name = "latent_gen"
-        else:
-            scope_name = "latent_gen%d" % step
-        with tf.variable_scope(scope_name) as scope:
-            if reuse:
-                scope.reuse_variables()
-            if condition is not None:
-                latent = tf.concat([latent, condition], 1)
-            fc1 = fc_bn_lrelu(latent, 1024)
-            fc2 = fc_bn_lrelu(fc1, 1024)
-            fc3 = fc_bn_lrelu(fc2, 1024)
-            out_mean = tf.contrib.layers.fully_connected(fc3, self.latent_dim, activation_fn=tf.identity)
-            out_stddev = tf.contrib.layers.fully_connected(fc3, self.latent_dim, activation_fn=tf.sigmoid)
-            return out_mean, out_stddev
+
 
     def inference_ladder(self, inputs, step, reuse=False):
-        with tf.variable_scope("inference%d" % step) as scope:
-            if reuse:
-                scope.reuse_variables()
-            iconv1 = conv2d_bn_lrelu(inputs, self.cs[1], [4, 4], 2)     # 32x32
-            iconv2 = conv2d_bn_lrelu(iconv1, self.cs[1], [4, 4], 1)
+        """
+        x -> z_t
 
-            ladder0 = tf.reshape(iconv2, [-1, np.prod(iconv2.get_shape().as_list()[1:])])
-            ladder0_mean = tf.contrib.layers.fully_connected(ladder0, self.ladder_dims[0], activation_fn=tf.identity)
-            ladder0_stddev = tf.contrib.layers.fully_connected(ladder0, self.ladder_dims[0], activation_fn=tf.sigmoid)
+        Recognition network part of the VLAE. We can think of this as a heirarchical 
+        encoder, so that we get heirarchical encodings of the input. Each level of this 
+        heirarchical encoder is used to construct part of the latent space. And the latent 
+        spaces from all the levels is concatenated at the end.
 
-            iconv3 = conv2d_bn_lrelu(iconv2, self.cs[2], [4, 4], 2)    # 16x16
-            iconv4 = conv2d_bn_lrelu(iconv3, self.cs[2], [4, 4], 1)
+        N.B. This is the recognition network for one step in the MC. Variables are shared if 
+        'self.share_recognition_params' is set to true.
 
-            ladder1 = tf.reshape(iconv4, [-1, np.prod(iconv4.get_shape().as_list()[1:])])
-            ladder1_mean = tf.contrib.layers.fully_connected(ladder1, self.ladder_dims[1], activation_fn=tf.identity)
-            ladder1_stddev = tf.contrib.layers.fully_connected(ladder1, self.ladder_dims[1], activation_fn=tf.sigmoid)
+        So this method will construct a network with ('self.vlae_levels' * 2) convolutional 
+        "levels". For the ith heirarchical encodings/level we produce a latent state of dimension
+        'self.vlae_latent_dims[i]'. Overall this network acts as a "recognition network", 
+        in the contect of the original VAE paper.
 
-            iconv5 = conv2d_bn_lrelu(iconv4, self.cs[3], [4, 4], 2)    # 8x8
-            iconv6 = conv2d_bn_lrelu(iconv5, self.cs[3], [4, 4], 1)
+        We note that at each level, we currently have two convolutions. The first has a stride 
+        of two and halves the "image_size" (spatial dimensions) of the encodings. The second 
+        has stride one and preserves image_size. Currently, we ignore 'self.image_sizes', but 
+        we output a error and kill the program if they're not equal (because then the generator 
+        ladder will not work)
 
-            ladder2 = tf.reshape(iconv6, [-1, np.prod(iconv6.get_shape().as_list()[1:])])
-            ladder2_mean = tf.contrib.layers.fully_connected(ladder2, self.ladder_dims[2], activation_fn=tf.identity)
-            ladder2_stddev = tf.contrib.layers.fully_connected(ladder2, self.ladder_dims[2], activation_fn=tf.sigmoid)
+        Latent variables take the form of multivariate gaussians (independent in each dimension),
+        so to represent it, we simply output a mean and std_dev for each dimension
 
-            iconv7 = conv2d_bn_lrelu(iconv6, self.cs[4], [4, 4], 2)    # 4x4
-            iconv7 = tf.reshape(iconv7, [-1, np.prod(iconv7.get_shape().as_list()[1:])])
-            ifc1 = fc_bn_lrelu(iconv7, self.cs[5])
-            ladder3_mean = tf.contrib.layers.fully_connected(ifc1, self.ladder_dims[3], activation_fn=tf.identity)
-            ladder3_stddev = tf.contrib.layers.fully_connected(ifc1, self.ladder_dims[3], activation_fn=tf.sigmoid)
+        :param inputs: the input to encode (in the math this is x)
+        :param step: the step in the overall markov chain (used for variable scoping)
+        :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
+                versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :return: the mean(s) and std_dev(s) of the latent state
+        """
+        if self.share_recognition_params:
+            scope_name = "inference_network"
+            reuse = tf.AUTO_REUSE
+        else:
+            scope_name = "inference_step_%d" % step
 
-            latent_mean = tf.concat([ladder0_mean, ladder1_mean, ladder2_mean, ladder3_mean], 1)
-            latent_stddev = tf.concat([ladder0_stddev, ladder1_stddev, ladder2_stddev, ladder3_stddev],1)
-            return latent_mean, latent_stddev
+        with tf.variable_scope(scope_name, reuse=reuse) as scope:
+            cur_encoding = inputs
+            image_sizes = [cur_encoding.get_shape().as_list()[1]]
+            latent_mean = []
+            latent_stddev = []
 
-    def combine_noise(self, latent, ladder, name="default"):
-        method = 'concat'
-        if method is 'concat':
-            return tf.concat([latent, ladder], len(latent.get_shape())-1)
-        elif method is 'add':
-            return latent + ladder
-        elif method is 'gated_add':
+            for level in range(self.vlae_levels-1):
+                # encoding steps (move to next level in ladder)
+                hidden = conv2d_bn_lrelu(cur_encoding, self.filter_sizes[level+1], [4,4], 2)
+                cur_encoding = conv2d_bn_lrelu(hidden, self.filter_sizes[level+1], [4,4], 1)
+
+                # latent code at this level in the ladder
+                ladder = tf.reshape(cur_encoding, [-1, np.prod(cur_encoding.get_shape().as_list()[1:])])
+                ladder_mean = tf.contrib.layers.fully_connected(ladder, self.vlae_latent_dims[level], activation_fn=tf.identity)
+                ladder_stddev = tf.contrib.layers.fully_connected(ladder, self.vlae_latent_dims[level], activation_fn=tf.sigmoid)
+
+                # maintain lists variables
+                image_sizes.append(cur_encoding.get_shape().as_list()[1])
+                latent_mean.append(ladder_mean)
+                latent_stddev.append(ladder_stddev)
+
+            # Add the last level (only have one convolution and a fully connected layer)
+            cur_encoding = conv2d_bn_lrelu(cur_encoding, self.filter_sizes[self.vlae_levels-1], [4,4], 2)
+            image_size = cur_encoding.get_shape().as_list()[1]
+            cur_encoding = tf.reshape(cur_encoding, [-1, np.prod(cur_encoding.get_shape().as_list()[1:])])
+            cur_encoding = fc_bn_lrelu(cur_encoding, self.filter_sizes[self.vlae_levels])
+
+            ladder_mean = tf.contrib.layers.fully_connected(ladder, self.vlae_latent_dims[self.vlae_levels-1], activation_fn=tf.identity)
+            ladder_stddev = tf.contrib.layers.fully_connected(ladder, self.vlae_latent_dims[self.vlae_levels-1], activation_fn=tf.sigmoid)
+
+            image_sizes.append(image_size)
+            latent_mean.append(ladder_mean)
+            latent_stddev.append(ladder_stddev)
+
+            # Check that 'self.image_sizes' is actually correct. Log an error and quit if it's not (generative network will not work)
+            if len(image_sizes) != len(self.image_sizes):
+                self.LOG.error("self.image_sizes is of length %d, but, image_sizes actually of length %d. " +
+                    "(need len(self.image_sizes) == self.vlae_levels+1" % (len(image_sizes, len(self.image_sizes))))
+                exit(-1)
+
+            for i in range(len(image_sizes)):
+                if image_sizes[i] != self.image_sizes[i]:
+                    self.LOG.error("self.image_sizes and image_sizes in inference/generative networks don't match:")
+                    self.LOG.error("self.image_sizes = %s" % self.image_sizes)
+                    self.LOG.error("image_sizes = %s" % image_sizes)
+                    exit(-1)
+
+            # Return the complete latent space (concatenated means adn stddevs)
+            return tf.concat(latent_mean, 1), tf.concat(latent_stddev, 1)
+
+
+
+
+
+    def combine_noise(self, latent, ladder_embedding, name="default"):
+        """
+        Combine noise (the latent vatriable) into the ladder embedding. That is, for some 
+        example, we have an encoded state, and we want to add the latent state to it 
+        in some way. (Used in the generator network).
+
+        We specify the way to combine the noise using:
+        self.combine_noise_method
+
+        It should take one of the following values:
+        'concat': Concatenate the noise onto the embeddings
+        'add': directly add the noise and the embeddings
+        'gated_add': multiply the noise by a (trainable) variable, and then add
+
+        :param latent: The latent variable we want to "combine" in
+        :param ladder_embedding: The embedding/encoding of the input. Want to combine noise into this encoded space
+        :param name: Name for this step, so that we can add tf/tensorboard summaries 
+        :return: tensor having combined the embedding and latent "noise"
+        """
+        if self.combine_noise_method == 'concat':
+            return tf.concat([latent, ladder_embedding], len(latent.get_shape()) - 1)
+
+        elif self.combine_noise_method == 'add':
+            return latent + ladder_embedding
+
+        elif self.combine_noise_method == 'gated_add':
             gate = tf.get_variable("gate", shape=ladder.get_shape()[1:], initializer=tf.constant_initializer(0.1))
             tf.histogram_summary(name + "_noise_gate", gate)
-            return latent + tf.multiply(gate, ladder)
+            return latent + tf.multiply(gate, ladder_embedding)
 
-    def generator_ladder(self, inputs, latent, step=None, reuse=False, condition=None):
-        if step is None:
-            scope_name = "generative"
+
+
+
+
+    def generator_ladder(self, inputs, latent, step, reuse=False):
+        """
+        x_t-1, z_t -> x_t
+
+        Generative network part of the VLAE. Basically the same architecture as the inference network
+        but run in reverse (i.e. using transposed convolutions rather than convolutions).
+
+        Inference encodings are computed from the input (x_t-1, the output from the previous step) 
+        and we add shortcuts between the ith level of the inference network and the ith level of the 
+        generative network 
+
+        We add residual connections over the whole autoencoder
+
+        The input to the lowest level (i.e. level == self.vlae_levels) is the latent state
+
+        The input to all other levels is the output of the previous level, with the latent 
+        state being added using 'self.combine_noise'
+
+        For all levels, if inputs is not null, we add shortcuts. Meaning that we directly 
+        add the encoding at the ith layer of the reconition netowork to the ith level 
+        of the generator network
+    
+        :param inputs: the output from the previous step (none if this is the first step) 
+        :param latent: latent variables, sampled from a unit gaussian
+        :param step: the current step in the markov chain
+        :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
+                versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :return: the output sample(s) from the generative network, and the residual connection ratio
+        """
+        encodings = None
+        if inputs is not None:
+            encodings = self.compute_encodings(inputs, step, reuse)
+
+        # variable scope setup for decoding/generating
+        if self.share_generative_params and step != 0: # network is different on step 0 (no inputs)
+            scope_name = "generative_network"
+            reuse = tf.AUTO_REUSE
         else:
-            scope_name = "generative%d" % step
-        with tf.variable_scope(scope_name) as gs:
-            if reuse:
-                gs.reuse_variables()
+            scope_name = "generative_step_%d" % step
 
-            ladder0, ladder1, ladder2, ladder3 = tf.split(latent, self.ladder_dims, 1)
-            # Manually set the size of splitted tensors because in some versions of tensowflow this is not automatic
-            ladder0 = tf.reshape(ladder0, [-1, self.ladder_dims[0]])
-            ladder1 = tf.reshape(ladder1, [-1, self.ladder_dims[1]])
-            ladder2 = tf.reshape(ladder2, [-1, self.ladder_dims[2]])
-            ladder3 = tf.reshape(ladder3, [-1, self.ladder_dims[3]])
-            if condition is not None:
-                ladder3 = tf.concat([ladder3, condition], 1)
-                print("Add labels")
-            ladder0 = fc_bn_lrelu(ladder0, int(self.fs[1] * self.fs[1] * self.cs[1]))
-            ladder0 = tf.reshape(ladder0, [-1, self.fs[1], self.fs[1], self.cs[1]])
-            ladder1 = fc_bn_lrelu(ladder1, int(self.fs[2] * self.fs[2] * self.cs[2]))
-            ladder1 = tf.reshape(ladder1, [-1, self.fs[2], self.fs[2], self.cs[2]])
-            ladder2 = fc_bn_lrelu(ladder2, int(self.fs[3] * self.fs[3] * self.cs[3]))
-            ladder2 = tf.reshape(ladder2, [-1, self.fs[3], self.fs[3], self.cs[3]])
-            ladder3 = fc_bn_lrelu(ladder3, self.cs[5])
-            ladder3 = tf.reshape(ladder3, [-1, self.cs[5]])
+        with tf.variable_scope(scope_name, reuse=reuse) as scope:
+            # split up the latent variables
+            ladder = tf.split(latent, self.vlae_latent_dims, 1)
+            for i in range(self.vlae_levels):
+                ladder[i] = tf.reshape(ladder[i], [-1, self.vlae_latent_dims[i]])
 
-            if inputs is not None:
-                iconv1 = conv2d_bn_lrelu(inputs, self.cs[1], [4, 4], 2)    # 32x32
-                iconv2 = conv2d_bn_lrelu(iconv1, self.cs[1], [4, 4], 1)
-                iconv3 = conv2d_bn_lrelu(iconv2, self.cs[2], [4, 4], 2)    # 16x16
-                iconv4 = conv2d_bn_lrelu(iconv3, self.cs[2], [4, 4], 1)
-                iconv5 = conv2d_bn_lrelu(iconv4, self.cs[3], [4, 4], 2)    # 8x8
-                iconv6 = conv2d_bn_lrelu(iconv5, self.cs[3], [4, 4], 1)
-                iconv7 = conv2d_bn_lrelu(iconv6, self.cs[4], [4, 4], 2)    # 4x4
-                iconv7 = tf.reshape(iconv7, [-1, np.prod(iconv7.get_shape().as_list()[1:])])
-                ifc1 = fc_bn_lrelu(iconv7, self.cs[5])
-                ifc2 = fc_bn_lrelu(ifc1, self.cs[5])
-                ladder3 = self.combine_noise(ifc2, ladder3, name="ladder3")
+            # project them into the correct image sizes to be added/concatenated to the intermediate representations
+            for i in range(self.vlae_levels-1):
+                ladder[i] = fc_bn_lrelu(ladder[i], self.image_sizes[i+1] * self.image_sizes[i+1] * self.filter_sizes[i+1])
+                ladder[i] = tf.reshape(ladder[i], [-1, self.image_sizes[i+1], self.image_sizes[i+1], self.filter_sizes[i+1]])
+            ladder[self.vlae_levels-1] = fc_bn_lrelu(ladder[self.vlae_levels-1], self.filter_sizes[self.vlae_levels+1])
+            ladder[self.vlae_levels-1] = tf.reshape(ladder[self.vlae_levels-1], [-1, self.filter_sizes[self.vlae_levels+1]])
 
-            gfc1 = fc_bn_relu(ladder3, self.cs[5])
-            gconv7 = fc_bn_relu(gfc1, self.fs[4] * self.fs[4] * self.cs[4])
-            gconv7 = tf.reshape(gconv7, tf.stack([tf.shape(gconv7)[0], self.fs[4], self.fs[4], self.cs[4]]))
+            # First level of generator network / last level of ladder
+            if encodings is not None:
+                cur_sample = encodings[self.vlae_levels]
+                cur_sample = self.combine_noise(cur_sample, ladder[self.vlae_levels-1])
+            else:                
+                cur_sample = ladder[self.vlae_levels-1]
 
-            if inputs is not None:
-                gconv6 = tf.nn.relu(conv2d_t_bn(gconv7, self.cs[3], [4, 4], 2) + iconv6)
-            else:
-                gconv6 = conv2d_t_bn_relu(gconv7, self.cs[3], [4, 4], 2)
-            gconv6 = self.combine_noise(gconv6, ladder2, name="ladder2")
-            gconv5 = conv2d_t_bn_relu(gconv6, self.cs[3], [4, 4], 1)
+            shape = [self.image_sizes[self.vlae_levels], self.image_sizes[self.vlae_levels], self.filter_sizes[self.vlae_levels]]
+            cur_sample = fc_bn_lrelu(cur_sample, np.prod(shape))
+            cur_sample = tf.reshape(cur_sample, [-1] + shape)
+            
+            # Middle layers of the network (each iteration deals with 1 intermediate image size)
+            # 2 transposed convolutions, adding in a shortcut from the inference encoder to the first if we have it
+            for level in range(self.vlae_levels-2, -1, -1):
+                deconv = conv2d_t_bn(cur_sample, self.filter_sizes[level+1], [4,4], 2, )
+                if encodings is not None:
+                    deconv = deconv + encodings[level+1]
+                deconv = tf.nn.relu(deconv)
 
-            if inputs is not None:
-                gconv4 = tf.nn.relu(conv2d_t_bn(gconv5, self.cs[2], [4, 4], 2) + iconv4)
-            else:
-                gconv4 = conv2d_t_bn_relu(gconv5, self.cs[2], [4, 4], 2)
-            gconv4 = self.combine_noise(gconv4, ladder1, name="ladder1")
-            gconv3 = conv2d_t_bn_relu(gconv4, self.cs[2], [4, 4], 1)
+                deconv = self.combine_noise(deconv, ladder[level])
+                cur_sample = conv2d_t_bn_relu(deconv, self.filter_sizes[level+1], [4,4], 1)
 
-            if inputs is not None:
-                gconv2 = tf.nn.relu(conv2d_t_bn(gconv3, self.cs[1], [4, 4], 2) + iconv2)
-            else:
-                gconv2 = conv2d_t_bn_relu(gconv3, self.cs[1], [4, 4], 2)
-            gconv2 = self.combine_noise(gconv2, ladder0, name="ladder0")
-            gconv1 = conv2d_t_bn_relu(gconv2, self.cs[1], [4, 4], 1)
-
-            output = conv2d_t(gconv1, self.data_dims[-1], [4, 4], 2, activation_fn=tf.sigmoid)
+            # Final layer to get the output
+            output = conv2d_t(cur_sample, self.data_dims[-1], [4,4], 2, activation_fn=tf.sigmoid)
             output = (self.dataset.range[1] - self.dataset.range[0]) * output + self.dataset.range[0]
-            if inputs is not None:
-                ratio = conv2d_t(gconv1, 1, [4, 4], 2, activation_fn=tf.sigmoid)
-                ratio = tf.tile(ratio, (1, 1, 1, self.data_dims[-1]))
-                output = tf.multiply(ratio, output) + tf.multiply(1 - ratio, inputs)
+
+            # Return output, adding resnet connection (encodings[0] = input to inf network)
+            if encodings is not None:
+                ratio = conv2d_t(cur_sample, 1, [4,4], 2, activation_fn=tf.sigmoid)
+                ratio = tf.tile(ratio, (1,1,1,self.data_dims[-1]))
+                output = tf.multiply(ratio, output) + tf.multiply(1-ratio, encodings[0])
                 return output, ratio
             else:
                 return output
+
+
+
+    def compute_encodings(self, inputs, step, reuse=False):
+        """
+        TODO: Description
+
+        :param inputs: the output from the previous step (none if this is the first step) 
+        :param step: the current step in the markov chain
+        :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
+                versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :return: Encodings for this given input
+        """
+        # variable scope setup for encoding input
+        if self.share_encoder_params and self.share_recognition_params:
+            scope_name = "inference_network"
+            reuse = True
+        elif self.share_encoder_params:
+            scope_name = "inference_step_%d" % step
+            reuse = True
+        if self.share_generative_params: 
+            scope_name = "generative_encoder_network"
+            reuse = tf.AUTO_REUSE
+        else:
+            scope_name = "generative_encoder_step_%d" % step
+
+        # compute encodings from the inputs (follows same structure as inference_ladder)
+        with tf.variable_scope(scope_name, reuse=reuse) as scope:
+            cur_encoding = inputs
+            encodings = [cur_encoding]
+            for level in range(self.vlae_levels-1):
+                hidden = conv2d_bn_lrelu(cur_encoding, self.filter_sizes[level+1], [4,4], 2)
+                cur_encoding = conv2d_bn_lrelu(hidden, self.filter_sizes[level+1], [4,4], 1)
+                encodings.append(cur_encoding)
+
+            cur_encoding = conv2d_bn_lrelu(cur_encoding, self.filter_sizes[self.vlae_levels-1], [4,4], 2)
+            cur_encoding = tf.reshape(cur_encoding, [-1, np.prod(cur_encoding.get_shape().as_list()[1:])])
+            cur_encoding = fc_bn_lrelu(cur_encoding, self.filter_sizes[self.vlae_levels])
+            encodings.append(cur_encoding)
+
+            return encodings
+

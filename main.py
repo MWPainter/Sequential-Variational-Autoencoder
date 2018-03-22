@@ -4,6 +4,8 @@
 # --dataset=lsun --denoise_train --plot_reconstruction --gpus=1 --db_path=/data/data/lsun/bedroom --use_gui
 
 import argparse
+import logging
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpus', type=str, default='')
@@ -36,6 +38,18 @@ from trainer import NoisyTrainer
 if args.gpus is not '':
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpus
 
+# Set the network name if there wasn't any passed in
+if args.netname is None or args.netname == "":
+    args.netname = "sequential_vae_%s" % dataset.name
+
+# Construct logger
+logpath = "models/" + args.netname 
+if not os.path.isdir(logpath):
+    os.makedirs(logpath)
+logging.basicConfig(filename=logpath+"/log.log", level=logging.INFO)
+LOG = logging.getLogger(args.netname)
+
+# Create the dataset object
 if args.dataset == 'mnist':
     dataset = MnistDataset()
 elif args.dataset == 'lsun':
@@ -45,10 +59,11 @@ elif args.dataset == 'celebA':
 elif args.dataset == 'svhn':
     dataset = SVHNDataset(db_path=args.db_path)
 else:
-    print("Unknown dataset")
+    LOG.error("Unknown dataset")
     exit(-1)
 
-model = SequentialVAE(dataset, name=args.netname, batch_size=args.batch_size)
-trainer = NoisyTrainer(model, dataset, args)
+# Construct network and trainer, then let it fly
+model = SequentialVAE(dataset, name=args.netname, batch_size=args.batch_size, logger=LOG)
+trainer = NoisyTrainer(model, dataset, args, LOG)
 trainer.train()
 

@@ -1,5 +1,7 @@
 from dataset import *
 from tensorflow.examples.tutorials.mnist import input_data
+import os
+import numpy as np
 
 
 class MnistDataset(Dataset):
@@ -8,7 +10,7 @@ class MnistDataset(Dataset):
         data_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'MNIST_data')
         self.mnist = input_data.read_data_sets(data_file, one_hot=True)
         self.name = "mnist"
-        self.data_dims = [28, 28, 1]
+        self.data_dims = [32, 32, 1] # actually 28x28, but added padding so it's a power of 2 and nice for the LVAE
         self.train_size = 50000
         self.test_size = 10000
         self.binary = binary
@@ -16,6 +18,7 @@ class MnistDataset(Dataset):
 
     def next_batch(self, batch_size):
         image = np.reshape(self.mnist.train.next_batch(batch_size)[0], (-1, 28, 28, 1))
+        image = np.pad(image, ((0,0),(2,2),(2,2),(0,0)), 'edge') # pads images to be 32x32 vs 28x28
         if self.binary:
             return np.rint(image)
         else:
@@ -23,6 +26,7 @@ class MnistDataset(Dataset):
 
     def next_test_batch(self, batch_size):
         image = np.reshape(self.mnist.test.next_batch(batch_size)[0], (-1, 28, 28, 1))
+        image = np.pad(image, ((0,0),(2,2),(2,2),(0,0)), 'edge') # pads images to be 32x32 vs 28x28
         if self.binary:
             return np.rint(image)
         else:

@@ -13,7 +13,7 @@ conv2d = tf.contrib.layers.convolution2d
 conv2d_t = tf.contrib.layers.convolution2d_transpose
 fc_layer = tf.contrib.layers.fully_connected
 
-
+# num_outputs = num filters
 def conv2d_bn_lrelu(inputs, num_outputs, kernel_size, stride):
     conv = tf.contrib.layers.convolution2d(inputs, num_outputs, kernel_size, stride,
                                            weights_initializer=tf.random_normal_initializer(stddev=0.02),
@@ -23,8 +23,26 @@ def conv2d_bn_lrelu(inputs, num_outputs, kernel_size, stride):
     conv = lrelu(conv)
     return conv
 
+def conv2d_bn_relu(inputs, num_outputs, kernel_size, stride):
+    conv = tf.contrib.layers.convolution2d(inputs, num_outputs, kernel_size, stride,
+                                           weights_initializer=tf.random_normal_initializer(stddev=0.02),
+                                           weights_regularizer=tf.contrib.layers.l2_regularizer(2.5e-5),
+                                           activation_fn=tf.identity)
+    conv = tf.contrib.layers.batch_norm(conv)
+    conv = tf.nn.relu(conv)
+    return conv
+
 
 def conv2d_t_bn_relu(inputs, num_outputs, kernel_size, stride):
+    conv = tf.contrib.layers.convolution2d_transpose(inputs, num_outputs, kernel_size, stride,
+                                                     weights_initializer=tf.random_normal_initializer(stddev=0.02),
+                                                     weights_regularizer=tf.contrib.layers.l2_regularizer(2.5e-5),
+                                                     activation_fn=tf.identity)
+    conv = tf.contrib.layers.batch_norm(conv)
+    conv = tf.nn.relu(conv)
+    return conv
+
+def conv2d_t_bn_lrelu(inputs, num_outputs, kernel_size, stride):
     conv = tf.contrib.layers.convolution2d_transpose(inputs, num_outputs, kernel_size, stride,
                                                      weights_initializer=tf.random_normal_initializer(stddev=0.02),
                                                      weights_regularizer=tf.contrib.layers.l2_regularizer(2.5e-5),
@@ -64,7 +82,7 @@ def fc_bn_relu(inputs, num_outputs):
 
 
 class Network:
-    def __init__(self, dataset):
+    def __init__(self, dataset, logger):
         self.dataset = dataset
         self.batch_size = dataset.batch_size
 
@@ -79,6 +97,8 @@ class Network:
         self.iteration = 0
         self.learning_rate = 0.0
         self.read_only = False
+
+        # Keep a reference to the logger
 
     def make_model_path(self):
         if not os.path.isdir("models/" + self.name):
@@ -120,10 +140,10 @@ class Network:
             try:
                 saver.restore(self.sess, file_name)
             except:
-                print("Warning: network load failed, reinitializing all variables", sys.exc_info()[0])
+                self.LOG.warning("Warning: network load failed, reinitializing all variables", sys.exc_info()[0])
                 self.sess.run(tf.global_variables_initializer())
         else:
-            print("No checkpoint file found, Initializing model from random")
+            self.LOG.info("No checkpoint file found, Initializing model from random")
 
     """ This function should train on the given batch and return the training loss """
     def train(self, batch_input, batch_target, condition=None):
