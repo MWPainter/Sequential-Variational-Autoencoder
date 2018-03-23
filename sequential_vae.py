@@ -103,6 +103,8 @@ class SequentialVAE(Network):
         self.intermediate_reconstruction = if each x_i should be a reconstruction of x. (If we should add a reconstruction loss for each x_i)
         self.early_stopping_mc = if the improvements in each step of the MC doesn't do anything, just stop it...
         self.early_stopping_threshold = the threshold on the L2 distance between successive samples for which we stop the chain
+        self.predict_latent_code = true if we want to precit the latent code using x_{t-1} rather than z (in BOTH gnerative and training e.g's)
+        self.information_maximization = add an information maximization training term in (see math)
         self.combine_noise_method = 'concat'/'add'/'gated_add', and specifies how to add in (latent) noise into the embeddings of the autoencoder 
                     (see combined_noise for more detail)
 
@@ -153,7 +155,9 @@ class SequentialVAE(Network):
         self.latent_dim = np.sum(self.vlae_latent_dims)
         self.intermediate_reconstruction = True
         self.early_stopping_mc = False
-        self.early_stopping_threshold = 0.001
+        self.early_stopping_threshold = 0.000005
+        self.predict_latent_code = False
+        self.information_maximization = False
         self.combine_noise_method = "concat"
 
         # Hyperparams and training params
@@ -175,6 +179,10 @@ class SequentialVAE(Network):
             self.share_generative_params = True
             self.early_stopping_mc = True
             self.mc_steps = 15
+
+        if self.name == "sequential_vae_celebA_inhomog_inf_max":
+            self.predict_latent_code = True
+            self.information_maximization = True
 
         elif self.name == "sequential_vae_lsun":
             self.vlae_latent_dims = [20, 30, 30, 30]
@@ -206,8 +214,6 @@ class SequentialVAE(Network):
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 5
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
 
         elif self.name == "sequential_vae_mnist_homog":
             self.vlae_levels = 3
@@ -218,7 +224,7 @@ class SequentialVAE(Network):
             self.mc_steps = 5
             self.share_generative_params = True
 
-        elif self.name == "sequential_vae_mnist_homog_early_stop":
+        elif self.name == "sequential_vae_mnist_homog_early_stopping":
             self.vlae_levels = 3
             self.vlae_latent_dims = [8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
@@ -255,6 +261,16 @@ class SequentialVAE(Network):
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 5
             self.share_recognition_params = True
+
+        elif self.name == "sequential_vae_mnist_inhomog_inf_max":
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [8, 8, 8]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.mc_steps = 5
+            self.predict_latent_code = True
+            self.information_maximization = True
 
         else:
             self.LOG.error("Unknown network name %s" % self.name)
@@ -323,9 +339,15 @@ class SequentialVAE(Network):
                 self.generator_samples.append(generator_sample)
 
             # Run the recognition network (encoder) to get mean and stddev of z_i. then sample a z_i
-            latent_mean, latent_stddev = self.inference(self.input_placeholder, step)
-            latent_sample = latent_mean + tf.multiply(latent_stddev, 
-                                                tf.random_normal(tf.stack([tf.shape(self.input_placeholder)[0], self.latent_dim])))
+            if self.predict_latent_code and step != 0:
+                latent_mean, latent_stddev = self.inference(self.training_samples[step-1], step)
+                latent_sample = latent_mean + tf.multiply(latent_stddev, 
+                                                    tf.random_normal(tf.stack([tf.shape(self.input_placeholder)[0], self.latent_dim])))
+                latent_placeholder = latent_sample # as we're computing the latent sample from x_t-1, we have that at generation time!!! So use this instead of the generated one
+            else:
+                latent_mean, latent_stddev = self.inference(self.input_placeholder, step)
+                latent_sample = latent_mean + tf.multiply(latent_stddev, 
+                                                    tf.random_normal(tf.stack([tf.shape(self.input_placeholder)[0], self.latent_dim])))
 
             # Generate the next sample. Make two different variables (using the same networks with different inputs) for training/generation
             # And keep track of (tensorboard summaries) the residual connection weights (for debugging)
@@ -345,12 +367,14 @@ class SequentialVAE(Network):
             # If early stopping is being used, first construct and apply a mask to the samples and losses
             if step != 0 and self.early_stopping_mc:
                 training_improvements = tf.reduce_mean(tf.square(self.training_samples[step] - self.training_samples[step-1]), [1,2,3])
-                training_mask = threshold(training_improvements, self.early_stopping_threshold)
+                training_energy = tf.reduce_mean(self.training_samples[step-1], [1,2,3]) # average pixel value from last iter (to check that we didn't cancel out last timestep). Called this energy for lack of a better term
+                training_mask = threshold(tf.minimum(training_improvements, training_energy), self.early_stopping_threshold)
                 tiled_training_mask = tf.tile(tf.reshape(training_mask, [-1,1,1,1]), tf.stack([1] + self.training_samples[step].get_shape().as_list()[1:])) # tile to broadcase how we want
                 self.training_samples[step] = tf.multiply(tiled_training_mask, self.training_samples[step])
 
                 generator_improvements = tf.reduce_mean(tf.square(self.generator_samples[step] - self.generator_samples[step-1]), [1,2,3])
-                generator_mask = threshold(generator_improvements, self.early_stopping_threshold)
+                generator_energy = tf.reduce_mean(self.generator_samples[step-1], [1,2,3]) # average pixel value from last iter (to check that we didn't cancel out last timestep). Called this energy for lack of a better term
+                generator_mask = threshold(tf.minimum(generator_improvements, generator_energy), self.early_stopping_threshold)
                 tiled_generator_mask = tf.tile(tf.reshape(generator_mask, [-1,1,1,1]), tf.stack([1] + self.generator_samples[step].get_shape().as_list()[1:])) # tile to broadcase how we want
                 self.generator_samples[step] = tf.multiply(tiled_generator_mask, self.generator_samples[step])
 
@@ -374,6 +398,12 @@ class SequentialVAE(Network):
             if self.intermediate_reconstruction or step == self.mc_steps-1:
                 self.loss += 16 * reconstruction_loss
             self.loss += self.reg_coeff * regularization_loss
+
+            # If we're maximizing information gain, add that as a loss too!!
+            if self.information_maximization:
+                mean = tf.reduce_mean(training_sample, 0)
+                sample_var = tf.reduce_mean(tf.square(training_sample - mean))
+                self.loss -= sample_var # want to MAXimize this variance, so we subtract it from the loss
 
             # Keep track of the final reconstruction error (we just set this each time) 
             # N.B. val = oldval + mask*(newval - oldval) is the same as "if mask == 1, val = newval"
