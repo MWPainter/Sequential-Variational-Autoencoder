@@ -136,7 +136,7 @@ class SequentialVAE(Network):
 
         # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
         self.vlae_levels = 4
-        self.vlae_latent_dims = [10, 10, 10, 10]
+        self.vlae_latent_dims = [20, 20, 20, 20]
         self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
@@ -170,6 +170,11 @@ class SequentialVAE(Network):
 
         elif self.name == "sequential_vae_celebA_homog":
             self.share_generative_params = True
+
+        elif self.name == "sequential_vae_celebA_homog_early_stopping":
+            self.share_generative_params = True
+            self.early_stopping_mc = True
+            self.mc_steps = 15
 
         elif self.name == "sequential_vae_lsun":
             self.vlae_latent_dims = [20, 30, 30, 30]
@@ -211,8 +216,6 @@ class SequentialVAE(Network):
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 5
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
             self.share_generative_params = True
 
         elif self.name == "sequential_vae_mnist_homog_early_stop":
@@ -222,8 +225,6 @@ class SequentialVAE(Network):
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 15
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
             self.share_generative_params = True
             self.early_stopping_mc = True
 
@@ -234,8 +235,6 @@ class SequentialVAE(Network):
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 5
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
             self.share_generative_params = True
             self.share_recognition_params = True
 
@@ -246,8 +245,6 @@ class SequentialVAE(Network):
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 5
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
             self.share_encoder_params = True
 
         elif self.name == "sequential_vae_mnist_share_inference":
@@ -257,8 +254,6 @@ class SequentialVAE(Network):
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 5
-            self.generator = self.generator_ladder
-            self.inference = self.inference_ladder
             self.share_recognition_params = True
 
         else:
