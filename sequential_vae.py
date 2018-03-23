@@ -239,8 +239,8 @@ class SequentialVAE(Network):
     
         # Construct initialize and print network
         self.construct_network()
-        self.print_network()
         self.init_network()
+        self.print_network()
         self.log_tf_variables()
 
         # stuff for figures
@@ -378,6 +378,7 @@ class SequentialVAE(Network):
         :return: The reconstruction loss of the FINAL sample (i.e. how well did the network do this time?)
         """
         self.iteration += 1
+        self.LOG.debug("Iteration %d" % self.iteration)
 
         # run values through our session 
         feed_dict = {self.input_placeholder: batch_input,
@@ -389,6 +390,7 @@ class SequentialVAE(Network):
         if self.iteration % self.save_freq == 0:
             self.save_network()
         if self.iteration % self.tb_summary_freq == 0:
+            self.LOG.debug("Writing tensorboard summaries")
             summary = self.sess.run(self.merged_summary, feed_dict=feed_dict)
             self.writer.add_summary(summary, self.iteration)
 
