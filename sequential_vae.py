@@ -2,6 +2,18 @@ from abstract_network import *
 from scipy import misc
 
 
+def step(x):
+    # x: tf tensor
+    # return 0 if x < 0, return 1 if x >= 0
+    return (tf.sign(x) + 1.0) / 2.0
+
+def threshold(x, eps):
+    # x: tf tensor
+    # eps: float threshold
+    # return 1 if x >= eps, which is true iff x/eps - 1 >= 0, return 0 otherwise
+    return step(x/eps - 1.0)
+
+
 class SequentialVAE(Network):
     """
     Implementation of SequentialVAE, extending our abstract Network class.
@@ -89,6 +101,8 @@ class SequentialVAE(Network):
         self.mc_steps = the number of steps to use in the markov chain
         self.latent_dim = the dimension of the latent spaces (i.e. the number of dimensions z_i has for EACH i)
         self.intermediate_reconstruction = if each x_i should be a reconstruction of x. (If we should add a reconstruction loss for each x_i)
+        self.early_stopping_mc = if the improvements in each step of the MC doesn't do anything, just stop it...
+        self.early_stopping_threshold = the threshold on the L2 distance between successive samples for which we stop the chain
         self.combine_noise_method = 'concat'/'add'/'gated_add', and specifies how to add in (latent) noise into the embeddings of the autoencoder 
                     (see combined_noise for more detail)
 
@@ -138,6 +152,8 @@ class SequentialVAE(Network):
         self.mc_steps = 8
         self.latent_dim = np.sum(self.vlae_latent_dims)
         self.intermediate_reconstruction = True
+        self.early_stopping_mc = False
+        self.early_stopping_threshold = 0.001
         self.combine_noise_method = "concat"
 
         # Hyperparams and training params
@@ -184,7 +200,7 @@ class SequentialVAE(Network):
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.steps = 5
+            self.mc_steps = 5
             self.generator = self.generator_ladder
             self.inference = self.inference_ladder
 
@@ -194,10 +210,22 @@ class SequentialVAE(Network):
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.steps = 5
+            self.mc_steps = 5
             self.generator = self.generator_ladder
             self.inference = self.inference_ladder
             self.share_generative_params = True
+
+        elif self.name == "sequential_vae_mnist_homog_early_stop":
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [8, 8, 8]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.mc_steps = 15
+            self.generator = self.generator_ladder
+            self.inference = self.inference_ladder
+            self.share_generative_params = True
+            self.early_stopping_mc = True
 
         elif self.name == "sequential_vae_mnist_share_all":
             self.vlae_levels = 3
@@ -205,7 +233,7 @@ class SequentialVAE(Network):
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.steps = 5
+            self.mc_steps = 5
             self.generator = self.generator_ladder
             self.inference = self.inference_ladder
             self.share_generative_params = True
@@ -217,7 +245,7 @@ class SequentialVAE(Network):
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.steps = 5
+            self.mc_steps = 5
             self.generator = self.generator_ladder
             self.inference = self.inference_ladder
             self.share_encoder_params = True
@@ -228,7 +256,7 @@ class SequentialVAE(Network):
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.steps = 5
+            self.mc_steps = 5
             self.generator = self.generator_ladder
             self.inference = self.inference_ladder
             self.share_recognition_params = True
@@ -319,18 +347,46 @@ class SequentialVAE(Network):
             self.generator_samples.append(generator_sample)
 
             # Construct the loss for this step. (KL distance for regularizing the latent code and squared reconstruction loss for sample)
-            reconstruction_loss = tf.reduce_mean(tf.square(training_sample - self.target_placeholder))
-            regularization_loss = -0.5 * self.latent_dim + tf.reduce_mean(-tf.log(latent_stddev) +
-                                                0.5 * tf.square(latent_stddev) +
-                                                0.5 * tf.square(latent_mean)) 
+            # If early stopping is being used, first construct and apply a mask to the samples and losses
+            if step != 0 and self.early_stopping_mc:
+                training_improvements = tf.reduce_mean(tf.square(self.training_samples[step] - self.training_samples[step-1]), [1,2,3])
+                training_mask = threshold(training_improvements, self.early_stopping_threshold)
+                tiled_training_mask = tf.tile(tf.reshape(training_mask, [-1,1,1,1]), tf.stack([1] + self.training_samples[step].get_shape().as_list()[1:])) # tile to broadcase how we want
+                self.training_samples[step] = tf.multiply(tiled_training_mask, self.training_samples[step])
+
+                generator_improvements = tf.reduce_mean(tf.square(self.generator_samples[step] - self.generator_samples[step-1]), [1,2,3])
+                generator_mask = threshold(generator_improvements, self.early_stopping_threshold)
+                tiled_generator_mask = tf.tile(tf.reshape(generator_mask, [-1,1,1,1]), tf.stack([1] + self.generator_samples[step].get_shape().as_list()[1:])) # tile to broadcase how we want
+                self.generator_samples[step] = tf.multiply(tiled_generator_mask, self.generator_samples[step])
+
+                tiled_training_mask = tf.tile(tf.reshape(training_mask, [-1, 1]), tf.stack([1] + latent_stddev.get_shape().as_list()[1:]))
+                batch_reconstruction_loss = tf.reduce_mean(tf.multiply(tiled_training_mask,
+                                                    tf.square(training_sample - self.target_placeholder)), [1,2,3])
+                batch_regularization_loss = tf.reduce_mean(tf.multiply(tiled_training_mask,
+                                                    -0.5 -tf.log(latent_stddev) +
+                                                    0.5 * tf.square(latent_stddev) +
+                                                    0.5 * tf.square(latent_mean)), 1) 
+
+            else:
+                batch_reconstruction_loss = tf.reduce_mean(tf.square(training_sample - self.target_placeholder), [1,2,3])
+                batch_regularization_loss = tf.reduce_mean(-0.5 -tf.log(latent_stddev) +
+                                                    0.5 * tf.square(latent_stddev) +
+                                                    0.5 * tf.square(latent_mean), 1) 
+            reconstruction_loss = tf.reduce_mean(batch_reconstruction_loss)
+            regularization_loss = tf.reduce_mean(batch_regularization_loss)
 
             # Add to the overall loss
             if self.intermediate_reconstruction or step == self.mc_steps-1:
-                self.loss += 16 * reconstruction_loss 
+                self.loss += 16 * reconstruction_loss
             self.loss += self.reg_coeff * regularization_loss
 
-            # Keep track of the final reconstruction error (we just set this each time)
-            self.final_loss = reconstruction_loss
+            # Keep track of the final reconstruction error (we just set this each time) 
+            # N.B. val = oldval + mask*(newval - oldval) is the same as "if mask == 1, val = newval"
+            if step != 0 and self.early_stopping_mc:
+                self.batch_final_loss = self.batch_final_loss * training_mask * (reconstruction_loss - self.batch_final_loss)
+            else:
+                self.batch_final_loss = reconstruction_loss
+            self.final_loss = tf.reduce_mean(self.batch_final_loss)
 
             # Add tensorboards summaries for the losses at this step
             tf.summary.scalar("reconstruction_loss_step_%d" % step, reconstruction_loss)
