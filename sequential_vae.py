@@ -136,11 +136,11 @@ class SequentialVAE(Network):
 
         # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
         self.vlae_levels = 4
-        self.vlae_latent_dims = [20, 20, 20, 20]
+        self.vlae_latent_dims = [10, 10, 10, 10]
         self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
-        self.filter_sizes = [self.data_dims[-1], 48, 96, 192, 384, 512]
+        self.filter_sizes = [self.data_dims[-1], 24, 48, 96, 192, 384]
 
         # SeqVAE parameters 
         self.share_recognition_params = False
@@ -354,9 +354,9 @@ class SequentialVAE(Network):
                 tiled_generator_mask = tf.tile(tf.reshape(generator_mask, [-1,1,1,1]), tf.stack([1] + self.generator_samples[step].get_shape().as_list()[1:])) # tile to broadcase how we want
                 self.generator_samples[step] = tf.multiply(tiled_generator_mask, self.generator_samples[step])
 
-                tiled_training_mask = tf.tile(tf.reshape(training_mask, [-1, 1]), tf.stack([1] + latent_stddev.get_shape().as_list()[1:]))
                 batch_reconstruction_loss = tf.reduce_mean(tf.multiply(tiled_training_mask,
                                                     tf.square(training_sample - self.target_placeholder)), [1,2,3])
+                tiled_training_mask = tf.tile(tf.reshape(training_mask, [-1, 1]), tf.stack([1] + latent_stddev.get_shape().as_list()[1:]))
                 batch_regularization_loss = tf.reduce_mean(tf.multiply(tiled_training_mask,
                                                     -0.5 -tf.log(latent_stddev) +
                                                     0.5 * tf.square(latent_stddev) +
