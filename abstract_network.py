@@ -110,7 +110,7 @@ class Network:
             for f in os.listdir("models/" + self.name):
                 if re.search(r"events.out*", f):
                     os.remove(os.path.join("models/" + self.name, f))
-        self.writer = tf.summary.FileWriter("models/" + self.name + "tbsummary", self.sess.graph)
+        self.writer = tf.summary.FileWriter("models/" + self.name, self.sess.graph)
         self.writer.flush()
 
     """ Save network, if network file already exists back it up to models/old folder. Only one back up will be created
