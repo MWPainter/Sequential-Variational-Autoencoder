@@ -144,7 +144,7 @@ class SequentialVAE(Network):
         self.learning_rate = 0.0002
         self.reg_coeff_rate = 5000.0 # 1 epoch = 1000
         self.save_freq = 2000
-        self.tb_summary_freq = 100
+        self.tb_summary_freq = 10
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
@@ -378,7 +378,6 @@ class SequentialVAE(Network):
         :return: The reconstruction loss of the FINAL sample (i.e. how well did the network do this time?)
         """
         self.iteration += 1
-        self.LOG.debug("Iteration %d" % self.iteration)
 
         # run values through our session 
         feed_dict = {self.input_placeholder: batch_input,
@@ -390,7 +389,7 @@ class SequentialVAE(Network):
         if self.iteration % self.save_freq == 0:
             self.save_network()
         if self.iteration % self.tb_summary_freq == 0:
-            self.LOG.debug("Writing tensorboard summaries")
+            self.LOG.debug("Writing tensorboard summaries, iter %d" % self.iteration)
             summary = self.sess.run(self.merged_summary, feed_dict=feed_dict)
             self.writer.add_summary(summary, self.iteration)
 
