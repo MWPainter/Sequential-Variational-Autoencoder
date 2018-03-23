@@ -239,8 +239,8 @@ class SequentialVAE(Network):
     
         # Construct initialize and print network
         self.construct_network()
-        self.init_network()
         self.print_network()
+        self.init_network()
         self.log_tf_variables()
 
         # stuff for figures
