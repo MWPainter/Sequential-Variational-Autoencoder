@@ -389,7 +389,6 @@ class SequentialVAE(Network):
         if self.iteration % self.save_freq == 0:
             self.save_network()
         if self.iteration % self.tb_summary_freq == 0:
-            self.LOG.debug("Writing tensorboard summaries, iter %d" % self.iteration)
             summary = self.sess.run(self.merged_summary, feed_dict=feed_dict)
             self.writer.add_summary(summary, self.iteration)
 
