@@ -213,7 +213,7 @@ class SequentialVAE(Network):
 
         elif self.name == "sequential_vae_mnist_share_encoders":
             self.vlae_levels = 3
-            self.vlae_latent_dims = [2, 2, 2]
+            self.vlae_latent_dims = [8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
@@ -224,7 +224,7 @@ class SequentialVAE(Network):
 
         elif self.name == "sequential_vae_mnist_share_inference":
             self.vlae_levels = 3
-            self.vlae_latent_dims = [2, 2, 2]
+            self.vlae_latent_dims = [8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
@@ -241,6 +241,7 @@ class SequentialVAE(Network):
         self.construct_network()
         self.init_network()
         self.print_network()
+        self.log_tf_variables()
 
         # stuff for figures
         self.mc_fig, self.mc_ax = None, None
@@ -347,6 +348,21 @@ class SequentialVAE(Network):
 
         # Finally, make the train op (the optimizer)
         self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+
+
+
+
+
+    def log_tf_variables(self):
+        """
+        Log all tensorflow variables, useful for debugging sometimes!
+        """
+        self.LOG.debug("Printing out all variable names constructed (for debugging).")
+        tf_vars = tf.trainable_variables()
+        i = 0
+        for var in tf_vars:
+            self.LOG.debug("(%dth variable) %s" % (i, var.name))
+            i += 1
 
 
 

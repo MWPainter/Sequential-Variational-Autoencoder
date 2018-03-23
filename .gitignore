@@ -1,4 +1,5 @@
 dataset/MNIST_data/*
 models/*
 plots/*
+data/*
 *.pyc

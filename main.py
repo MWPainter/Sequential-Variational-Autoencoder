@@ -46,7 +46,7 @@ if args.netname is None or args.netname == "":
 logpath = "models/" + args.netname 
 if not os.path.isdir(logpath):
     os.makedirs(logpath)
-logging.basicConfig(filename=logpath+"/log.log", level=logging.INFO)
+logging.basicConfig(filename=logpath+"/log.log", level=logging.DEBUG)
 LOG = logging.getLogger(args.netname)
 
 # Create the dataset object
