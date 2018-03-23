@@ -180,7 +180,7 @@ class SequentialVAE(Network):
             self.early_stopping_mc = True
             self.mc_steps = 15
 
-        if self.name == "sequential_vae_celebA_inhomog_inf_max":
+        elif self.name == "sequential_vae_celebA_inhomog_inf_max":
             self.predict_latent_code = True
             self.information_maximization = True
 
