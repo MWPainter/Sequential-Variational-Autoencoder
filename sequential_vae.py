@@ -180,7 +180,7 @@ class SequentialVAE(Network):
         # python main.py --dataset=mnist --plot_reconstruction --netname=sequential_vae_mnist_inhomog
         elif self.name == "sequential_vae_mnist_inhomog":
             self.vlae_levels = 3
-            self.vlae_latent_dims = [2, 2, 2]
+            self.vlae_latent_dims = [8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
@@ -190,7 +190,7 @@ class SequentialVAE(Network):
 
         elif self.name == "sequential_vae_mnist_homog":
             self.vlae_levels = 3
-            self.vlae_latent_dims = [2, 2, 2]
+            self.vlae_latent_dims = [8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
@@ -201,7 +201,7 @@ class SequentialVAE(Network):
 
         elif self.name == "sequential_vae_mnist_share_all":
             self.vlae_levels = 3
-            self.vlae_latent_dims = [2, 2, 2]
+            self.vlae_latent_dims = [8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
