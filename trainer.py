@@ -79,10 +79,6 @@ class NoisyTrainer:
 
     def train(self):
         """
-        TODO: add more conditions to stopping training?
-                (currently we have a v.high number and just cntr-c out of it)
-        TODO: add variable length chains to training here? (probably in seqvae)
-
         The main training loop. 
         Occasionally logs reconstruction loss + calls the test loop
         When we want visualizations, this will call network.visualize to produce them
@@ -98,7 +94,7 @@ class NoisyTrainer:
                 self.LOG.info("Reconstruction error @%d per pixel: " % iteration, test_error)
                 self.network.visualize(iteration // self.args.vis_frequency)
 
-            # one training loop
+            # one training iter
             input_batch = self.dataset.next_batch(self.batch_size)
             target_batch = input_batch
             if self.args.denoise_train:
