@@ -667,6 +667,8 @@ class SequentialVAE(Network):
 
     def visualize(self, epoch, batch_size=10, use_gui=True):
         """
+        Todo: Clean this function up + comment properly.
+
         Creates a visualization of the markov chain. 
         (Calls generate_mc_samples and training_mc_samples).
         """
@@ -684,7 +686,8 @@ class SequentialVAE(Network):
             v = np.zeros([z[0].shape[0] * self.data_dims[0], len(z) * self.data_dims[1], self.data_dims[2]])
             for b in range(0, z[0].shape[0]):
                 for t in range(0, len(z)):
-                    v[b*self.data_dims[0]:(b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] = self.dataset.display(z[t][b])
+                    v[b*self.data_dims[0]:(b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] 
+                                                                                        = self.dataset.display(z[t][b])
 
             if use_gui is True:
                 self.mc_ax[i].cla()
@@ -832,10 +835,11 @@ class SequentialVAE(Network):
 
         The input to the lowest level (i.e. level == self.vlae_levels) is the latent state
 
-        The input to all other levels is the output of the previous level, with the latent state being added using 'self.combine_noise'
+        The input to all other levels is the output of the previous level, with the latent state being added using 
+        'self.combine_noise'
 
-        For all levels, if input_batch is not null, we add shortcuts. Meaning that we directly add the encoding at the ith 
-        layer of the reconition netowork to the ith level of the generator network
+        For all levels, if input_batch is not null, we add shortcuts. Meaning that we directly add the encoding at the 
+        ith layer of the reconition netowork to the ith level of the generator network
     
         :param input_batch: the output from the previous step (none if this is the first step) 
         :param latent: latent variables, sampled from a unit gaussian
