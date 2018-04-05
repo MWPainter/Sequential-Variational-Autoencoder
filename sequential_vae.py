@@ -1,6 +1,6 @@
 from abstract_network import *
 from scipy import misc
-from tf.contrib import layers
+layers = tf.contrib.layers
 
 
 def step(x):
@@ -101,7 +101,7 @@ class SequentialVAE(Network):
         self.homogeneous_operation = if we want to run the network in a homogenous mode. This makes the network a single 
                     step long, and constructed using 'self.construct_network_homogeneous', rather than 
                     'self.construct_network'. *** trainer.py treats the network differently in this case ***.
-                    See trainer.py and 'self.construct_network_homogeneous' for more details
+                    See trainer.py and 'self.construct_network_homogeneous' for more details. 
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
                     homgogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
                     (in BOTH gnerative and training samples).
@@ -140,7 +140,7 @@ class SequentialVAE(Network):
 
         # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
         self.vlae_levels = 4
-        self.vlae_latent_dims = [10, 10, 10, 10]
+        self.vlae_latent_dims = [2, 2, 2, 2]
         self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
@@ -175,9 +175,9 @@ class SequentialVAE(Network):
         elif self.name == "sequential_vae_celebA_homog":
             self.share_theta_weights = True
 
-        # elif self.name == "sequential_vae_celebA_homog_early_stopping":
-        #     self.share_theta_weights = True
-        #     self.mc_steps = 15
+        elif self.name == "sequential_vae_celebA_homog_early_stopping":
+            self.share_theta_weights = True
+            self.homogeneous_operation = True
 
         elif self.name == "sequential_vae_celebA_inhomog_inf_max":
             self.predict_latent_code = True
@@ -259,9 +259,10 @@ class SequentialVAE(Network):
             self.mc_steps = 5
             self.share_phi_weights = True
 
+        # python main.py --dataset=mnist --plot_reconstruction --netname=sequential_vae_mnist_inhomog_inf_max
         elif self.name == "sequential_vae_mnist_inhomog_inf_max":
             self.vlae_levels = 3
-            self.vlae_latent_dims = [8, 8, 8]
+            self.vlae_latent_dims = [2, 2, 2]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
@@ -293,7 +294,7 @@ class SequentialVAE(Network):
         Construct the network, using 'self.inference' and 'self.generator'. This network will produce
         the sequence of samples and latent random variables.
 
-        Tensorflow variables defined here:
+        Tensorflow variables defined here (and the subsequent function calls this function makes):
         self.input_placeholder = placeholder for the input image (= the target image + optional noise)
         self.target_placeholder =  placeholder for the target image (= input image, without any noise)
         self.reg_coeff = placeholder (with default value) for the coefficient of regularization
@@ -302,7 +303,7 @@ class SequentialVAE(Network):
         self.training_samples = samples generated along the chain, use these one's when training the network this uses a 
                     latent variable that's sampled using the mean and stddev from inference network of the previous 
                     sample
-        self.generator_samples = samples generated along the chaing, use these one's when running the generatively this 
+        self.generative_samples = samples generated along the chain, use these one's when running the generatively this 
                     uses the latent variable fed into the placeholder in self.latents
 
         N.B. Although when making the generator and training sample variables, we make two seperate 
@@ -323,13 +324,13 @@ class SequentialVAE(Network):
 
         self.latents = []
         self.training_samples = []
-        self.generator_samples = []
+        self.generative_samples = []
 
         self.loss = 0.0
         self.final_loss = None
 
         training_sample = None
-        generator_sample = None
+        generative_sample = None
 
         for step in range(self.mc_steps):
             # Create placeholder for latent variable on this step. i.e. z_i (used in "generative mode")
@@ -340,18 +341,19 @@ class SequentialVAE(Network):
 
             # On the first step, let x_0 be uniform random noise
             if step == 0:
-                generator_sample = tf.random_uniform(shape=tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims))
-                self.generator_samples.append(generator_sample)
+                generative_sample = tf.random_uniform(shape=tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims))
+                self.generative_samples.append(generative_sample)
 
             # Make recognition, p_phi(z_t|x), and generative, p_theta(x_t|z_t,x_t-1), networks. Append samples from them
+            # latent_train = the latent variable in training mode, latent_generative = in generative mode
             latent_mean, latent_stddev, latent_train, latent_generative = self.create_recognition_network(step=step)
-            training_sample, generator_sample = self.create_generator_network(training_sample, generator_sample, 
+            training_sample, generative_sample = self.create_generator_network(training_sample, generative_sample, 
                                                                               latent_train, latent_generative, step)
             self.training_samples.append(training_sample)
-            self.generator_samples.append(generator_sample)
+            self.generative_samples.append(generative_sample)
 
             # Compute and accumulate losses
-            self.compute_and_accumulate_loss(training_sample, latent_mean, latent_stddev, step)
+            self.compute_and_accumulate_loss(training_sample, latent_train, latent_mean, latent_stddev, step)
 
         # Add tensorboard summary for the loss
         tf.summary.scalar("loss", self.loss)
@@ -359,8 +361,16 @@ class SequentialVAE(Network):
         # Group all summaries into one variable we can keep hold of 
         self.merged_summary = tf.summary.merge_all()
 
-        # Finally, make the train op (the optimizer)
-        self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        # Finally, make the train op (the optimizer), given the losses computed in 'self.compute_and_accumulate_loss'
+        # If we are predicting the latent code, we want to have seperate updates for theta and phi
+        if not self.predict_latent_code:
+            self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        else:
+            theta_vars = self.get_subset_weights("theta")
+            elbo_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, var_list=theta_vars)
+            phi_vars = self.get_subset_weights("phi")
+            pred_latent_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.pred_latent_loss, var_list=phi_vars)
+            self.train_op = tf.group(elbo_train_op, pred_latent_train_op)
 
 
 
@@ -405,7 +415,7 @@ class SequentialVAE(Network):
 
 
 
-    def create_recognition_network(self, last_training_sample, last_generative_sample, latent_train, latent_gen, step):
+    def create_generator_network(self, last_training_sample, last_generative_sample, latent_train, latent_gen, step):
         """
         *Should only be called from within 'self.construct_network'*
 
@@ -424,18 +434,18 @@ class SequentialVAE(Network):
         :param latent_gen: The latent variable, z''_t, when run in generative mode
         :param step: the time step with respect to the MC
         :return training_sample: the next training sample (for when running in training mode)
-        :return generator_sample: the next generative sample (for when running int generative mode)
+        :return generative_sample: the next generative sample (for when running int generative mode)
         """
         if step == 0:
             training_sample = self.generator(None, latent_train, step)
-            generator_sample = self.generator(None, latent_gen, step, reuse=True)
+            generative_sample = self.generator(None, latent_gen, step, reuse=True)
         else:
-            training_sample, resnet_ratios = self.generator(training_sample, latent_train, step)
-            generator_sample, _ = self.generator(generator_sample, latent_placeholder, step, reuse=True)
+            training_sample, resnet_ratios = self.generator(last_training_sample, latent_train, step)
+            generative_sample, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
             if self.add_debug_tb_variables:
                 tf.summary.scalar("resnet_gate_weight_step_%d" % step, tf.reduce_mean(resnet_ratios))
 
-        return training_sample, generator_sample
+        return training_sample, generative_sample
 
 
 
@@ -443,7 +453,7 @@ class SequentialVAE(Network):
 
 
 
-    def compute_and_accumulate_loss(self, training_sample, latent_mean, latent_stddev, step):
+    def compute_and_accumulate_loss(self, training_sample, latent_sample, latent_mean, latent_stddev, step):
         """
         *Should only be called from within 'self.construct_network'*
 
@@ -454,10 +464,18 @@ class SequentialVAE(Network):
         The function also accumulates losses in the variables self.loss
 
         If we are predicting the latent code (i.e. using q_phi(z_t | x_t) rather than q_phi(z_t | x) as a recognition 
-        network), then we also wich to add the Latent InfoMax loss, defined in the paper (may be named something 
-        other than "Latent InfoMax" later)
+        network), then we also wich to add the Latent InfoMax loss (see write up for math), defined in the paper (may 
+        be named something other than "Latent InfoMax" later)
+
+        We accumulate the Laten InfoMax loss in the self.pred_latent_loss variable. The function of the loss at a 
+        given MC step involves computing sums of the form sum_i (q(x_t,z_t) * f(x_t,z_t)_i), where i is an spatial 
+        index, t is a time index. We note that q(x_t,z_t) = q(z_t | x_t)q(x_t) \propto q(z_t | x_t), as we always 
+        take the MLE of x_t (the generator outputs a fixed 'training_sample'). To compute q(z_t | x_t) we just need to 
+        find the probability that we produced 'latent_sample', given that it was sampled from 
+        Normal(latent_mean, latent_stddev)
 
         :param training_sample: the current sample, when running in training mode, x_t
+        :param latent_sample:
         :param latent_mean: The mean of the latent variable, z''_t, produced from the recognition network
         :param latent_stddev: The stddev's (per dim) of the latent variable z''_t, produced from the recognition network
         :param step: the time step with respect to the MC
@@ -476,16 +494,24 @@ class SequentialVAE(Network):
             self.loss += 16 * reconstruction_loss
         self.loss += self.reg_coeff * regularization_loss
 
-        # If we're  we're running in 
-        # Latent InfoMax mode. We want to add
+        # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
+        # to the new objective
         if self.predict_latent_code:
-            # TODO update for the mattttthhhhh
-            pass
-            """
-            mean = tf.reduce_mean(training_sample, 0)
-            sample_var = tf.reduce_mean(tf.square(training_sample - mean))
-            self.loss -= sample_var # want to MAXimize this variance, so we subtract it from the loss
-            """
+            image_dims = np.prod(training_sample.get_shape().as_list()[1:])
+            flat_training_sample = tf.reshape(training_sample, [-1, image_dims])
+
+            normal_distr = tf.contrib.distributions.MultivariateNormalDiag(latent_mean, latent_stddev)
+            probs = normal_distr.prob(latent_sample)
+            probs = tf.expand_dims(probs, 1)
+
+            first_moment_per_pixel = tf.reduce_sum(tf.multiply(probs, flat_training_sample), axis=0)
+            first_moment_squared = tf.reduce_sum(tf.square(first_moment_per_pixel))
+
+            image_norm_squared = tf.reduce_sum(tf.square(flat_training_sample), axis=1)
+            second_moment = tf.reduce_sum(tf.multiply(probs, image_norm_squared))
+
+            self.pred_latent_loss = second_moment - first_moment_squared
+            tf.summary.scalar("pred_latent_loss_step_%d" % step, self.pred_latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
         self.final_loss = tf.reduce_mean(reconstruction_loss)
@@ -497,6 +523,50 @@ class SequentialVAE(Network):
         # Finally, prevent gradients from propogating between the different samples, if each encoder/decoder have their own losses
         if self.intermediate_reconstruction:
             training_sample = tf.stop_gradient(training_sample)
+
+
+
+
+
+    def get_subset_weights(self, substr):
+        """
+        Get a subset of the trainable weights, whos name contains 'substr' as a substring in it's name
+
+        :param substr: the substring to search for in the weight names
+        :return: the set of weights with substr as a substring of the variable name
+        """
+        tf_vars = tf.trainable_variables()
+        subset = []
+        for var in tf_vars:
+            if substr in var.name:
+                subset.append(var)
+        return subset
+
+
+
+
+
+    def get_all_weights(self):
+        """
+        To get all weights, use that "" is a substring of any other string
+        """
+        return self.get_subset_weights("")
+
+
+
+
+
+    def log_tf_variables(self):
+        """
+        Log all tensorflow variables, useful for debugging sometimes!
+        """
+        self.LOG.debug("Printing out all variable names constructed (for debugging).")
+        tf_vars = tf.trainable_variables()
+        i = 0
+        for var in tf_vars:
+            self.LOG.debug("(%dth variable) %s" % (i, var.name))
+            i += 1
+
 
 
 
@@ -558,21 +628,6 @@ class SequentialVAE(Network):
 
 
 
-    def log_tf_variables(self):
-        """
-        Log all tensorflow variables, useful for debugging sometimes!
-        """
-        self.LOG.debug("Printing out all variable names constructed (for debugging).")
-        tf_vars = tf.trainable_variables()
-        i = 0
-        for var in tf_vars:
-            self.LOG.debug("(%dth variable) %s" % (i, var.name))
-            i += 1
-
-
-
-
-
     def train(self, input_batch, batch_target):
         """
         Perofrm ONE training update. (This is called from the main training loop in trainer.py)
@@ -623,7 +678,7 @@ class SequentialVAE(Network):
         """
         Run the network in a generative mede. Generate sample from a normal distribution and feed 
         them into the network (as the latent variables). To run the generative part(s) of the network
-        we run the self.generator_samples tf ops.
+        we run the self.generative_samples tf ops.
 
         N.B. This isn't used for optimization, just for visualization.
 
@@ -639,7 +694,7 @@ class SequentialVAE(Network):
         for i in range(self.mc_steps):
             feed_dict[self.latents[i]] = np.random.normal(size=(batch_size, self.latent_dim))
 
-        output = self.sess.run(self.generator_samples, feed_dict=feed_dict)
+        output = self.sess.run(self.generative_samples, feed_dict=feed_dict)
         return output
 
 
@@ -686,8 +741,8 @@ class SequentialVAE(Network):
             v = np.zeros([z[0].shape[0] * self.data_dims[0], len(z) * self.data_dims[1], self.data_dims[2]])
             for b in range(0, z[0].shape[0]):
                 for t in range(0, len(z)):
-                    v[b*self.data_dims[0]:(b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] 
-                                                                                        = self.dataset.display(z[t][b])
+                    v[b*self.data_dims[0]:(b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] = \
+                                                                                        self.dataset.display(z[t][b])
 
             if use_gui is True:
                 self.mc_ax[i].cla()
@@ -728,27 +783,24 @@ class SequentialVAE(Network):
         x -> z_t 
         or x_t -> z_t, if self.predict_latent_code is true
 
-        Recognition network part of the VLAE. We can think of this as a heirarchical 
-        encoder, so that we get heirarchical encodings of the input. Each level of this 
-        heirarchical encoder is used to construct part of the latent space. And the latent 
-        spaces from all the levels is concatenated at the end.
+        Recognition network part of the VLAE. We can think of this as a heirarchical encoder, so that we get 
+        heirarchical encodings of the input. Each level of this heirarchical encoder is used to construct part of the 
+        latent space. And the latent spaces from all the levels is concatenated at the end.
 
         N.B. This is the recognition network for one step in the MC. Variables are shared if 
         'self.share_recognition_params' is set to true.
 
-        So this method will construct a network with ('self.vlae_levels' * 2) convolutional 
-        "levels". For the ith heirarchical encodings/level we produce a latent state of dimension
-        'self.vlae_latent_dims[i]'. Overall this network acts as a "recognition network", 
-        in the contect of the original VAE paper.
+        So this method will construct a network with ('self.vlae_levels' * 2) convolutional "levels". For the ith 
+        heirarchical encodings/level we produce a latent state of dimension 'self.vlae_latent_dims[i]'. Overall this 
+        network acts as a "recognition network", in the contect of the original VAE paper.
 
-        We note that at each level, we currently have two convolutions. The first has a stride 
-        of two and halves the "image_size" (spatial dimensions) of the encodings. The second 
-        has stride one and preserves image_size. Currently, we ignore 'self.image_sizes', but 
-        we output a error and kill the program if they're not equal (because then the generator 
-        ladder will not work)
+        We note that at each level, we currently have two convolutions. The first has a stride of two and halves the 
+        "image_size" (spatial dimensions) of the encodings. The second has stride one and preserves image_size. 
+        Currently, we ignore 'self.image_sizes', but we output a error and kill the program if they're not equal 
+        (because then the generator ladder will not work)
 
-        Latent variables take the form of multivariate gaussians (independent in each dimension),
-        so to represent it, we simply output a mean and std_dev for each dimension
+        Latent variables take the form of multivariate gaussians (independent in each dimension), so to represent it, 
+        we simply output a mean and std_dev for each dimension
 
         :param input_batch: the input to encode (in the math this is x)
         :param step: the step in the overall markov chain (used for variable scoping)
@@ -828,6 +880,10 @@ class SequentialVAE(Network):
         **Important:**
         A diagram is REALLY helpful to understand all of this.
 
+        **Important:**
+        This canse build two different networks, one for the first step where we don't have an x_t-1, and the other is 
+        when we do have an x_t-1. The differences can be seen with the conditional blocks "if encodings is not null".
+
         Inference encodings are computed from the input (x_t-1, the output from the previous step) and we add shortcuts 
         between the ith level of the inference network and the ith level of the generative network 
 
@@ -898,7 +954,7 @@ class SequentialVAE(Network):
             # (encodings[0] = input to inf network)
             if encodings is not None:
                 ratio = conv2d_t(cur_sample, 1, [4,4], 2, activation_fn=tf.sigmoid)
-                ratio = tf.tile(ratio, (1,1,1,self.data_dims[-)1]))
+                ratio = tf.tile(ratio, (1,1,1,self.data_dims[-1]))
                 output = tf.multiply(ratio, output) + tf.multiply(1-ratio, encodings[0])
                 return output, ratio
             else:
