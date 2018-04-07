@@ -105,6 +105,8 @@ class SequentialVAE(Network):
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
                     homgogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
                     (in BOTH gnerative and training samples).
+        self.num_samples_for_latent_pred_loss = the number of samples of z_t and x_t used to estimate the variance, used 
+                    in the predict_latent_loss function.
         self.latent_prior_stddev = the stddev on the prior that we use for the latent space (set to 1.0 for default)
         self.use_uniform_prior = if we want to use a uniform prior (but Gaussian estimation)
         self.combine_noise_method = 'concat'/'add'/'gated_add', and specifies how to add in (latent) noise into the 
@@ -161,6 +163,7 @@ class SequentialVAE(Network):
         self.early_stopping_threshold = 0.0000000001
         self.homogeneous_operation = False
         self.predict_latent_code = False
+        self.num_samples_for_latent_pred_loss = 15
         self.latent_prior_stddev = 1.0
         self.use_uniform_prior = False
         self.combine_noise_method = "concat"
@@ -367,6 +370,9 @@ class SequentialVAE(Network):
         generative_sample = None
 
         for step in range(self.mc_steps):
+            last_training_sample = training_sample
+            last_generative_sample = generative_sample
+
             # Create placeholder for latent variable on this step. i.e. z_i (used in "generative mode")
             latent_placeholder = tf.placeholder(shape = [None, self.latent_dim], 
                                                 dtype = tf.float32, 
@@ -381,13 +387,22 @@ class SequentialVAE(Network):
             # Make recognition, p_phi(z_t|x), and generative, p_theta(x_t|z_t,x_t-1), networks. Append samples from them
             # latent_train = the latent variable in training mode, latent_generative = in generative mode
             latent_mean, latent_stddev, latent_train, latent_generative = self.create_recognition_network(step=step)
-            training_sample, generative_sample = self.create_generator_network(training_sample, generative_sample, 
+            training_sample, generative_sample = self.create_generator_network(last_training_sample, last_generative_sample, 
                                                                               latent_train, latent_generative, step)
             self.training_samples.append(training_sample)
             self.generative_samples.append(generative_sample)
 
+            # If we're predicting the latent code, then we need multiple samples of x_t ~ Pr(x_t | z_t, x_t-1) to 
+            # estimate a variance
+            img_samples = None
+            latent_samples = None
+            if self.predict_latent_code:
+                img_samples, latent_samples = self.sample_images(last_training_sample, latent_mean, latent_stddev)
+
+
             # Compute and accumulate losses
-            self.compute_and_accumulate_loss(training_sample, latent_train, latent_mean, latent_stddev, step)
+            self.compute_and_accumulate_loss(training_sample, latent_train, latent_mean, latent_stddev, img_samples, 
+                                             latent_samples, step)
 
         # Add tensorboard summary for the loss
         tf.summary.scalar("loss", self.loss)
@@ -442,7 +457,7 @@ class SequentialVAE(Network):
 
 
 
-    def create_generator_network(self, last_training_sample, last_generative_sample, latent_train, latent_gen, step):
+    def create_generator_network(self, last_training_sample, last_generative_sample, latent_train, latent_gen, samples, step):
         """
         *Should only be called from within 'self.construct_network'*
 
@@ -469,7 +484,7 @@ class SequentialVAE(Network):
         else:
             training_sample, resnet_ratios = self.generator(last_training_sample, latent_train, step)
             generative_sample, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
-            if self.add_debug_tb_variables:
+            if self.add_debug_tb_variables and step is not None:
                 tf.summary.scalar("resnet_gate_weight_step_%d" % step, tf.reduce_mean(resnet_ratios))
 
         return training_sample, generative_sample
@@ -478,9 +493,52 @@ class SequentialVAE(Network):
 
 
 
+    def sample_images(self, last_training_sample, latent_mean, latent_stddev, first_latent_sample):
+        """
+        If we;re running the "Latent Info Max" version of the network, then we need to maximize a Variance term to 
+        train the recognition network(s). To actually estimate this, we need multiple samples of 
+        z_t ~ q_phi(z_t | x_t-1) and x_t ~ p_theta(x_t | z_t, x_t-1). This function just produces 
+        'self.num_samples_for_latent_pred_loss' number of samples.
+
+        Not that when we run self.create_generator_network, None != 0, so we set reuse=True to reuse the weights (as we 
+        should).
+
+        :param last_training_sample: The last training sample, x_t, when run in training mode
+        :param latent_mean: The mean of the latent variable, z''_t, produced from the recognition network
+        :param latent_stddev: The stddev's (per dim) of the latent variable z''_t, produced from the recognition network
+        :param first_latent_sample: The latent sample that was used to produce self.training_samples[-1]. (i.e. the 
+                    latent sample that was used as part of the main training chain).
+        :return: 'self.num_samples_for_latent_pred_loss' samples of the latent z_t ~q_phi(z_t | x_t-1) and the samples 
+                    of the image x_t ~ p_theta(x_t | z_t, x_t-1)
+        """
+        # Initialize the samples with the one actually produces in the training chain
+        image_samples = [self.training_samples[-1]]
+        latent_samples = [first_latent_sample]
+        latent_shape = tf.stack([tf.shape(self.input_placeholder)[0], self.latent_dim])
+
+        # Sample the remaining latents/images
+        for _ in xrange(self.num_samples_for_latent_pred_loss-1):
+            latent_sample = latent_mean + tf.multiply(latent_stddev, tf.random_normal(latent_shape))
+            training_sample, _ = self.create_generator_network(last_training_sample, None, latent_sample, 
+                                                               latent_sample, None)
+
+            latent_samples.append(latent_sample)
+            image_samples.append(training_samples)
+
+        # Pack into a tensor with shape [batch_size, img_wifth, img_height, num_samples, img_depth] for images,
+        # and tensor with shape [batch_size, num_samples, latent_dims] for the latents
+        image_samples_tensor = tf.stack(image_samples, axis=1)
+        latent_samples_tensor = tf.stack(latent_samples, axis=1)
+        return image_samples_tensor, latent_samples_tensor
 
 
-    def compute_and_accumulate_loss(self, training_sample, latent_sample, latent_mean, latent_stddev, step):
+
+
+
+
+
+    def compute_and_accumulate_loss(self, training_sample, latent_sample, latent_mean, latent_stddev, 
+                                    latent_samples_for_lp, img_samples_for_lp, step):
         """
         *Should only be called from within 'self.construct_network'*
 
@@ -508,9 +566,17 @@ class SequentialVAE(Network):
         Normal(latent_mean, latent_stddev)
 
         :param training_sample: the current sample, when running in training mode, x_t
-        :param latent_sample:
+        :param latent_sample: a sample of the latent variable z_t, sampled from q_phi(z_t | x_t)
         :param latent_mean: The mean of the latent variable, z''_t, produced from the recognition network
         :param latent_stddev: The stddev's (per dim) of the latent variable z''_t, produced from the recognition network
+        :param latent_samples_for_lp: Samples of the latent in the form of a tensor with shape [batch_size,
+                    latent_dims, num_samples]. Used to estimate expectations for the loss in 'Latent Info Max' mode.
+        :param latent_samples_for_latent_pred_loss: Samples of the latent in the form of a tensor with shape [batch_size, 
+                    num_samples, latent_dim]. Used to estimate expectations for the loss in 'Latent Info Max' mode.
+                    "for_lp" = "for latent prediction loss"
+        :param img_samples_for_lp: Samples of the latent in the form of a tensor with shape [batch_size, 
+                    num_samples, img_wifth, img_height, img_depth]. Used to estimate expectations for the loss in 
+                    'Latent Info Max' mode. "for_lp" = "for latent prediction loss"
         :param step: the time step with respect to the MC
         :return: None
         """
@@ -533,20 +599,25 @@ class SequentialVAE(Network):
         # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
         # to the new objective. Also make it "warm started", because it's a little unstable early on
         if self.predict_latent_code:
-            image_dims = np.prod(training_sample.get_shape().as_list()[1:])
-            flat_training_sample = tf.reshape(training_sample, [-1, image_dims])
-
+            # probs of latent vars
             normal_distr = tf.contrib.distributions.MultivariateNormalDiag(latent_mean, latent_stddev)
-            probs = normal_distr.prob(latent_sample)
-            probs = tf.expand_dims(probs, 1)
+            latent_probs = normal_distr.prob(latent_samples_for_lp)
 
-            first_moment_per_pixel = tf.reduce_sum(tf.multiply(probs, flat_training_sample), axis=0)
-            first_moment_squared = tf.reduce_sum(tf.square(first_moment_per_pixel))
+            # reshape image samples to be [batch_size, num_smaples, image_dims]
+            image_dims = np.prod(training_sample.get_shape().as_list()[1:])
+            flat_training_samples = tf.reshape(img_samples_for_lp, 
+                                                [-1, self.num_samples_for_latent_pred_loss, image_dims])
 
-            image_norm_squared = tf.reduce_sum(tf.square(flat_training_sample), axis=1)
-            second_moment = tf.reduce_sum(tf.multiply(probs, image_norm_squared))
+            # compute mean
+            weighted_training_samples = tf.multiply(latent_probs, flat_training_samples)
+            mean_per_index = tf.reduce_sum(weighted_training_samples, axis=1)
 
-            self.pred_latent_loss = self.reg_coeff * -(second_moment - first_moment_squared)
+            # compute var
+            shifted_training_samples = flat_training_samples - mean_per_index
+            total_variance = tf.reduce_sum(tf.multiply(latent_probs, shifted_training_samples))
+
+            # set loss = -var, so we maximize variance
+            self.pred_latent_loss = self.reg_coeff * -total_variance
             tf.summary.scalar("pred_latent_loss_step_%d" % step, self.pred_latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
@@ -594,6 +665,8 @@ class SequentialVAE(Network):
 
     def make_training_op(self):
         """
+        *Should only be called from within 'self.construct_network'*
+
         Computes self.train_op, the tf op used to train the network, which combines updates for the ELBO loss, and the 
         latent prediction loss, that were computed in 'self.compute_and_accumulate_loss'
 
