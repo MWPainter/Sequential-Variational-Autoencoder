@@ -82,7 +82,7 @@ def fc_bn_relu(inputs, num_outputs):
 
 
 class Network:
-    def __init__(self, dataset, logger):
+    def __init__(self, dataset, logger, version):
         self.dataset = dataset
         self.batch_size = dataset.batch_size
 
@@ -90,8 +90,13 @@ class Network:
 
         gpu_options = tf.GPUOptions(allow_growth=True)
         self.sess = tf.InteractiveSession(config=tf.ConfigProto(gpu_options=gpu_options, allow_soft_placement=True))
+
         # A unique name should be given to each instance of subclasses during initialization
         self.name = "default"
+
+        # Keeping track of version of this model etc
+        self.version = version
+        self.model_dir = "models/" + self.name + "_v" + self.version
 
         # These should be updated accordingly
         self.iteration = 0
@@ -99,18 +104,19 @@ class Network:
         self.read_only = False
 
         # Keep a reference to the logger
+        self.LOG = logger
 
     def make_model_path(self):
-        if not os.path.isdir("models/" + self.name):
-            os.makedirs("models/" + self.name)
+        if not os.path.isdir(self.model_dir):
+            os.makedirs(self.model_dir)
 
     def print_network(self):
         self.make_model_path()
-        if os.path.isdir("models/" + self.name):
-            for f in os.listdir("models/" + self.name):
+        if os.path.isdir(self.model_dir):
+            for f in os.listdir(self.model_dir):
                 if re.search(r"events.out*", f):
-                    os.remove(os.path.join("models/" + self.name, f))
-        self.writer = tf.summary.FileWriter("models/" + self.name, self.sess.graph)
+                    os.remove(os.path.join(self.model_dir, f))
+        self.writer = tf.summary.FileWriter(self.model_dir, self.sess.graph)
         self.writer.flush()
 
     """ Save network, if network file already exists back it up to models/old folder. Only one back up will be created
@@ -123,9 +129,9 @@ class Network:
             self.make_model_path()
             if not os.path.isdir("models/old"):
                 os.mkdir("models/old")
-            file_name = "models/" + self.name + "/" + self.name + ".ckpt"
+            file_name = self.model_dir + "/" + self.name + "_v" + str(self.version) + ".ckpt"
             if os.path.isfile(file_name):
-                os.rename(file_name, "models/old/" + self.name + ".ckpt")
+                os.rename(file_name, "models/old/" + self.name + "_v" + str(self.version) + ".ckpt")
             saver.save(self.sess, file_name)
 
     """ Either initialize or load network from file.
@@ -134,7 +140,7 @@ class Network:
         self.sess.run(tf.global_variables_initializer())
         if restart:
             return
-        file_name = "models/" + self.name + "/" + self.name + ".ckpt"
+        file_name = "models/" + self.name + "_v" + str(self.version)+ "/" + self.name + ".ckpt"
         if len(glob.glob(file_name + '*')) != 0:
             saver = tf.train.Saver()
             try:
