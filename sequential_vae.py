@@ -124,6 +124,8 @@ class SequentialVAE(Network):
         self.save_freq = how frequently to save the network during training
         self.tb_summary_freq = how frequently to write summaries to tensorboard
         self.add_debug_tb_variables = if we should add tensorboard variables which are only necessary for debugging
+        self.clip_grads = should we clip gradients
+        self.clip_grad_value = what value should the gradient be clipped to?
 
         :param dataset: the dataset that we will be training this network on 
                         (implicitly defining the p_data we wish to model)
@@ -169,7 +171,9 @@ class SequentialVAE(Network):
         self.save_freq = 2000
         self.tb_summary_freq = 10
         self.add_debug_tb_variables = True
-        
+        self.clip_grads = True
+        self.clip_grad_value = 1.0
+
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
@@ -325,7 +329,9 @@ class SequentialVAE(Network):
         Tensorflow variables defined here (and the subsequent function calls this function makes):
         self.input_placeholder = placeholder for the input image (= the target image + optional noise)
         self.target_placeholder =  placeholder for the target image (= input image, without any noise)
-        self.reg_coeff = placeholder (with default value) for the coefficient of regularization
+        self.reg_coeff = placeholder (with default value) for the coefficient of regularization (slowly raised from zero
+                    to one, to implement "warm starting"). We also use this as the coefficient for 
+                    'self.latent_pred_loss', as that's a little unstable early on in training.
         
         self.latents = placeholders for latent variables, use these when we want to use the network generatively
         self.training_samples = samples generated along the chain, use these one's when training the network this uses a 
@@ -389,16 +395,9 @@ class SequentialVAE(Network):
         # Group all summaries into one variable we can keep hold of 
         self.merged_summary = tf.summary.merge_all()
 
-        # Finally, make the train op (the optimizer), given the losses computed in 'self.compute_and_accumulate_loss'
-        # If we are predicting the latent code, we want to have seperate updates for theta and phi
-        if not self.predict_latent_code:
-            self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
-        else:
-            all_vars = self.get_all_weights()
-            elbo_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, var_list=all_vars)
-            phi_vars = self.get_subset_weights("phi")
-            pred_latent_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.pred_latent_loss, var_list=phi_vars)
-            self.train_op = tf.group(elbo_train_op, pred_latent_train_op)
+        # Make the training op in self.train_op
+        self.make_training_op()
+
 
 
 
@@ -532,7 +531,7 @@ class SequentialVAE(Network):
         self.loss += self.reg_coeff * regularization_loss
 
         # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
-        # to the new objective
+        # to the new objective. Also make it "warm started", because it's a little unstable early on
         if self.predict_latent_code:
             image_dims = np.prod(training_sample.get_shape().as_list()[1:])
             flat_training_sample = tf.reshape(training_sample, [-1, image_dims])
@@ -547,7 +546,7 @@ class SequentialVAE(Network):
             image_norm_squared = tf.reduce_sum(tf.square(flat_training_sample), axis=1)
             second_moment = tf.reduce_sum(tf.multiply(probs, image_norm_squared))
 
-            self.pred_latent_loss = -(second_moment - first_moment_squared)
+            self.pred_latent_loss = self.reg_coeff * -(second_moment - first_moment_squared)
             tf.summary.scalar("pred_latent_loss_step_%d" % step, self.pred_latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
@@ -588,6 +587,72 @@ class SequentialVAE(Network):
         To get all weights, use that "" is a substring of any other string
         """
         return self.get_subset_weights("")
+
+
+
+
+
+    def make_training_op(self):
+        """
+        Computes self.train_op, the tf op used to train the network, which combines updates for the ELBO loss, and the 
+        latent prediction loss, that were computed in 'self.compute_and_accumulate_loss'
+
+        If we are predicting the latent code, only want to have the latent prediction variables (phi) try to maximize 
+        the varience of the output (it would be silly to make this an objective of the generative model (theta))
+
+        Also performs some processing on the gradients, including gradient clipping
+
+        And computes some useful sanity checks to watch in training if we're debugging
+        """
+        optimizer = tf.train.AdamOptimizer(self.learning_rate)
+
+        all_vars = self.get_all_weights()
+        theta_vars = self.get_subset_weights("theta")
+        phi_vars = self.get_subset_weights("phi")
+
+        grads = optimizer.compute_gradients(self.loss, var_list=all_vars)
+        if self.clip_grads:
+            grads = [(tf.clip_by_value(grad, -self.clip_grad_value, self.clip_grad_value), var) for grad, var in grads]
+        elbo_train_op = optimizer.apply_gradients(grads)
+
+        if self.add_debug_tb_variables:
+            theta_weights_norm = tf.global_norm(zip(*theta_vars)[0])
+            phi_weights_norm = tf.global_norm(zip(*phi_vars)[0])
+
+            theta_elbo_grads = [grad for grad, var in grads if ("theta" in var.name)]
+            phi_elbo_grads = [grad for grad, var in grads if ("phi" in var.name)]
+
+            theta_elbo_grads_norm = tf.global_norm(theta_elbo_grads)
+            phi_elbo_grads_norm = tf.global_norm(phi_elbo_grads)
+
+            theta_elbo_update_ratio = self.learning_rate * theta_grads_norm / theta_weights_norm
+            phi_elbo_update_ratio = self.learning_rate * phi_grads_norm / phi_weights_norm
+
+            tf.summary.scalar("theta_weights_norm", theta_weights_norm)
+            tf.summary.scalar("phi_weights_norm", phi_weights_norm)
+            tf.summary.scalar("theta_elbo_grads_norm", theta_elbo_grads_norm)
+            tf.summary.scalar("phi_elbo_grads_norm", phi_elbo_grads_norm)
+            tf.summary.scalar("theta_elbo_update_ratio", theta_elbo_update_ratio)
+            tf.summary.scalar("phi_elbo_update_ratio", phi_elbo_update_ratio)
+
+
+        if not self.predict_latent_code:
+            self.trian_op = elbo_train_op
+
+        else:
+            grads = optimizer.compute_gradients(self.pred_latent_loss, var_list=phi_vars)
+            if self.clip_grads:
+                grads = [(tf.clip_by_value(grad, -self.clip_grad_value, self.clip_grad_value), var) for grad, var in grads]
+            pred_latent_train_op = optimizer.apply_gradients(grads)
+
+            if self.add_debug_tb_variables:
+                phi_latent_pred_grads_norm = tf.global_norm(zip(*grads)[0])
+                phi_latent_pred_update_ratio = self.learning_rate * phi_latent_pred_grad_norm / phi_weights_norm
+
+                tf.summary.scalar("phi_latent_pred_grads_norm", phi_latent_pred_grads_norm)
+                tf.summary.scalar("phi_latent_pred_update_ratio", phi_latent_pred_update_ratio)
+
+            self.train_op = tf.group(elbo_train_op, pred_latent_train_op)
 
 
 
