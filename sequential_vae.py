@@ -96,14 +96,12 @@ class SequentialVAE(Network):
         self.latent_dim = the dimension of the latent spaces (i.e. the number of dimensions z_i has for EACH i)
         self.intermediate_reconstruction = if each x_i should be a reconstruction of x. (If we should add a 
                     reconstruction loss for each x_i)
+        self.early_stopping_mc = true, if when running the network in GENERATIVE mode, we stop the chain early if 
+                    successive samples don't make enough improvement
         self.early_stopping_threshold = threshold on the L2 distance of successive samples for which we stop the chain,
-                    note that we only stop early if 'self.homogeneous_operation' is true
-        self.homogeneous_operation = if we want to run the network in a homogenous mode. This makes the network a single 
-                    step long, and constructed using 'self.construct_network_homogeneous', rather than 
-                    'self.construct_network'. *** trainer.py treats the network differently in this case ***.
-                    See trainer.py and 'self.construct_network_homogeneous' for more details. 
+                    note that we only stop early if 'self.early_stopping_mc' is true
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
-                    homgogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
+                    homogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
                     (in BOTH gnerative and training samples).
         self.num_samples_for_latent_pred_loss = the number of samples of z_t and x_t used to estimate the variance, used 
                     in the predict_latent_loss function.
@@ -160,8 +158,8 @@ class SequentialVAE(Network):
         self.mc_steps = 8
         self.latent_dim = np.sum(self.vlae_latent_dims)
         self.intermediate_reconstruction = True
+        self.early_stopping_mc = False
         self.early_stopping_threshold = 0.0000000001
-        self.homogeneous_operation = False
         self.predict_latent_code = False
         self.num_samples_for_latent_pred_loss = 15
         self.latent_prior_stddev = 1.0
@@ -309,10 +307,7 @@ class SequentialVAE(Network):
             exit(-1)
     
         # Construct initialize and print network
-        if not self.homogeneous_operation:
-            self.construct_network()
-        else:
-            self.construct_network_homogeneous()
+        self.construct_network()
         self.init_network()
         self.print_network()
         self.log_tf_variables()
@@ -470,6 +465,9 @@ class SequentialVAE(Network):
         See self.generator_ladder for why we pass reuse=True to self.generator sometimes (we want the generator network 
         to be the same in both trianing and generative modes).
 
+        If we have self.early_stopping_mc = True, then we need to identify if this step (when running in GENERATOR mode) 
+        didn't make a significant enough improvement. If so, we return a zeroed 'generative_sample'
+
         :param last_training_sample: The last training sample, x_t, when run in training mode
         :param last_generative_sample: The last generative sample, x_t, when run in generative mode
         :param latent_train: The latent variable, z''_t, when run in training mode
@@ -486,6 +484,17 @@ class SequentialVAE(Network):
             generative_sample, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
             if self.add_debug_tb_variables and step is not None:
                 tf.summary.scalar("resnet_gate_weight_step_%d" % step, tf.reduce_mean(resnet_ratios))
+
+            # At test time/generative mode. If we either don't make any improvement this step, or, the chain was already 
+            # cut off (last_generative_sample \approx 0), them we should zero out 'generative_sample'. We compute the 
+            # change between the two images (L2 norm) to detect lack of change. Threshold is a helper defined at the 
+            # beginning of the file. To zero examples in the batch out, we compute a mask and multiply by that.
+            if self.early_stopping_mc:
+                improvements = tf.reduce_mean(tf.square(generative_sample - last_generative_sample), [1,2,3])
+                last_avg_val =  tf.reduce_mean(last_generative_sample, [1,2,3]) 
+                batch_mask = threshold(tf.minimum(improvements, last_avg_val), self.early_stopping_threshold)
+                tiled_mask = tf.tile(tf.reshape(batch_mask, [-1,1,1,1]), tf.stack([1] + generative_sample.get_shape().as_list()[1:]))
+                generative_sample = tf.multiply(tiled_generator_mask, self.generator_samples[step])
 
         return training_sample, generative_sample
 
@@ -741,63 +750,6 @@ class SequentialVAE(Network):
         for var in tf_vars:
             self.LOG.debug("(%dth variable) %s" % (i, var.name))
             i += 1
-
-
-
-
-
-
-    def construct_network_homogeneous(self):
-        """
-        TODO
-        """
-        pass
-
-        """ 
-        TODO: this was the old "early stopping" code from the naive implemntation of the homogenous operation
-            
-
-            Enforcing the early stopping and computing the losses accordingly: 
-            -----------------------------------------------------------------
-
-            # Construct the loss for this step. (KL distance for regularizing the latent code and squared reconstruction loss for sample)
-            # If early stopping is being used, first construct and apply a mask to the samples and losses
-            if step != 0 and self.early_stopping_mc:
-                training_improvements = tf.reduce_mean(tf.square(self.training_samples[step] - self.training_samples[step-1]), [1,2,3])
-                training_energy = tf.reduce_mean(self.training_samples[step-1], [1,2,3]) # average pixel value from last iter (to check that we didn't cancel out last timestep). Called this energy for lack of a better term
-                training_mask = threshold(tf.minimum(training_improvements, training_energy), self.early_stopping_threshold)
-                tiled_training_mask = tf.tile(tf.reshape(training_mask, [-1,1,1,1]), tf.stack([1] + self.training_samples[step].get_shape().as_list()[1:])) # tile to broadcase how we want
-                self.training_samples[step] = tf.multiply(tiled_training_mask, self.training_samples[step])
-
-                generator_improvements = tf.reduce_mean(tf.square(self.generator_samples[step] - self.generator_samples[step-1]), [1,2,3])
-                generator_energy = tf.reduce_mean(self.generator_samples[step-1], [1,2,3]) # average pixel value from last iter (to check that we didn't cancel out last timestep). Called this energy for lack of a better term
-                generator_mask = threshold(tf.minimum(generator_improvements, generator_energy), self.early_stopping_threshold)
-                tiled_generator_mask = tf.tile(tf.reshape(generator_mask, [-1,1,1,1]), tf.stack([1] + self.generator_samples[step].get_shape().as_list()[1:])) # tile to broadcast how we want
-                self.generator_samples[step] = tf.multiply(tiled_generator_mask, self.generator_samples[step])
-
-                batch_reconstruction_loss = tf.reduce_mean(tf.multiply(tiled_training_mask,
-                                                    tf.square(training_sample - self.target_placeholder)), [1,2,3])
-                tiled_training_mask = tf.tile(tf.reshape(training_mask, [-1, 1]), tf.stack([1] + latent_stddev.get_shape().as_list()[1:]))
-                batch_regularization_loss = tf.reduce_mean(tf.multiply(tiled_training_mask,
-                                                    -0.5 -tf.log(latent_stddev) +
-                                                    0.5 * tf.square(latent_stddev) +
-                                                    0.5 * tf.square(latent_mean)), 1)
-
-
-
-
-
-            Computing the "final loss":
-            --------------------------
-
-            # Keep track of the final reconstruction error (we just set this each time) 
-            # N.B. val = oldval + mask*(newval - oldval) is the same as "if mask == 1, val = newval"
-            if step != 0 and self.early_stopping_mc:
-                self.batch_final_loss = self.batch_final_loss * training_mask * (reconstruction_loss - self.batch_final_loss)
-            else:
-                self.batch_final_loss = reconstruction_loss
-            self.final_loss = tf.reduce_mean(self.batch_final_loss) 
-        """
 
 
 
