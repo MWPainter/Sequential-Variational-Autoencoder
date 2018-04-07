@@ -105,6 +105,8 @@ class SequentialVAE(Network):
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
                     homgogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
                     (in BOTH gnerative and training samples).
+        self.latent_prior_stddev = the stddev on the prior that we use for the latent space (set to 1.0 for default)
+        self.use_uniform_prior = if we want to use a uniform prior (but Gaussian estimation)
         self.combine_noise_method = 'concat'/'add'/'gated_add', and specifies how to add in (latent) noise into the 
                     embeddings of the autoencoder (see combined_noise for more detail)
 
@@ -140,7 +142,7 @@ class SequentialVAE(Network):
 
         # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
         self.vlae_levels = 4
-        self.vlae_latent_dims = [2, 2, 2, 2]
+        self.vlae_latent_dims = [15, 15, 15, 15]
         self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
@@ -154,9 +156,11 @@ class SequentialVAE(Network):
         self.mc_steps = 8
         self.latent_dim = np.sum(self.vlae_latent_dims)
         self.intermediate_reconstruction = True
-        self.early_stopping_threshold = 0.000005
+        self.early_stopping_threshold = 0.0000000001
         self.homogeneous_operation = False
         self.predict_latent_code = False
+        self.latent_prior_stddev = 1.0
+        self.use_uniform_prior = False
         self.combine_noise_method = "concat"
 
         # Hyperparams and training params
@@ -165,6 +169,7 @@ class SequentialVAE(Network):
         self.save_freq = 2000
         self.tb_summary_freq = 10
         self.add_debug_tb_variables = True
+        
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
@@ -179,8 +184,31 @@ class SequentialVAE(Network):
             self.share_theta_weights = True
             self.homogeneous_operation = True
 
+        # current..
         elif self.name == "sequential_vae_celebA_inhomog_inf_max":
             self.predict_latent_code = True
+            self.latent_prior_stddev = 128
+
+        # current..
+        elif self.name == "sequential_vae_celebA_inhomog_inf_max_uniform":
+            self.predict_latent_code = True
+            self.use_uniform_prior = True
+
+        # current
+        elif self.name == "vlae_celebA":
+            self.mc_steps = 1
+            self.vlae_latent_dims = [16, 16, 16, 16] # same latent size as 8 stage markov chain
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+
+        # current..
+        elif self.name == "sequential_vae_celebA_homog_fixed_length":
+            self.share_theta_weights = True 
+
+        # current..
+        elif self.name == "sequential_vae_celebA_homog_fixed_length_inf_max":
+            self.share_theta_weights = True 
+            self.predict_latent_code = True
+            self.latent_prior_stddev = 128
 
         elif self.name == "sequential_vae_lsun":
             self.vlae_latent_dims = [20, 30, 30, 30]
@@ -366,8 +394,8 @@ class SequentialVAE(Network):
         if not self.predict_latent_code:
             self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
         else:
-            theta_vars = self.get_subset_weights("theta")
-            elbo_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, var_list=theta_vars)
+            all_vars = self.get_all_weights()
+            elbo_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, var_list=all_vars)
             phi_vars = self.get_subset_weights("phi")
             pred_latent_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.pred_latent_loss, var_list=phi_vars)
             self.train_op = tf.group(elbo_train_op, pred_latent_train_op)
@@ -463,6 +491,12 @@ class SequentialVAE(Network):
 
         The function also accumulates losses in the variables self.loss
 
+        The KL distance between N(mu, sigma), and N(0, sigma2) is:
+        sum_i 1 + log(sigma_i) - log(sigma2_i) - sigma_i^2/2sigma2_i^2 - mu_i^2/2sigma2_i^2 
+        where the index i is with respect to dimension.
+
+        For us, sigma2 is fixed, so -log(sigma2) is a constant, and we ignore it in our loss function.
+
         If we are predicting the latent code (i.e. using q_phi(z_t | x_t) rather than q_phi(z_t | x) as a recognition 
         network), then we also wich to add the Latent InfoMax loss (see write up for math), defined in the paper (may 
         be named something other than "Latent InfoMax" later)
@@ -483,9 +517,12 @@ class SequentialVAE(Network):
         """
 
         batch_reconstruction_loss = tf.reduce_mean(tf.square(training_sample - self.target_placeholder), [1,2,3])
-        batch_regularization_loss = tf.reduce_mean(-0.5 -tf.log(latent_stddev) +
-                                            0.5 * tf.square(latent_stddev) +
-                                            0.5 * tf.square(latent_mean), 1) 
+        if not self.use_uniform_prior:
+            batch_regularization_loss = tf.reduce_mean(-0.5 -tf.log(latent_stddev) +
+                                                0.5 * tf.square(latent_stddev) / (self.latent_prior_stddev ** 2) +
+                                                0.5 * tf.square(latent_mean) / (self.latent_prior_stddev ** 2), 1) 
+        else:
+            batch_regularization_loss = tf.reduce_mean(-tf.log(latent_stddev))
         reconstruction_loss = tf.reduce_mean(batch_reconstruction_loss)
         regularization_loss = tf.reduce_mean(batch_regularization_loss)
 
@@ -510,7 +547,7 @@ class SequentialVAE(Network):
             image_norm_squared = tf.reduce_sum(tf.square(flat_training_sample), axis=1)
             second_moment = tf.reduce_sum(tf.multiply(probs, image_norm_squared))
 
-            self.pred_latent_loss = second_moment - first_moment_squared
+            self.pred_latent_loss = -(second_moment - first_moment_squared)
             tf.summary.scalar("pred_latent_loss_step_%d" % step, self.pred_latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
