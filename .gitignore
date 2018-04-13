@@ -3,3 +3,4 @@ models/*
 plots/*
 data/*
 *.pyc
+copytoatlas.sh

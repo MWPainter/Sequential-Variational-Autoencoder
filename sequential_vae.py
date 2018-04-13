@@ -855,7 +855,7 @@ class SequentialVAE(Network):
                 else:
                     self.mc_ax[i].set_title("train")
 
-            folder_name = 'models/%s/samples' % self.name
+            folder_name = self.base_dir + "/samples"
             if not os.path.isdir(folder_name):
                 os.makedirs(folder_name)
 
