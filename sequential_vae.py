@@ -14,6 +14,15 @@ def threshold(x, eps):
     # return 1 if x >= eps, which is true iff x/eps - 1 >= 0, return 0 otherwise
     return step(x/eps - 1.0)
 
+def clip_grad_if_not_none(grad, clip_val):
+    # grad: tf gradient tensor
+    # clip_val: the value to clip by
+    # returns tf.clip_by_value(grad, -self.clip_grad_value, self.clip_grad_value) if grad not None
+    # N.B. tf.clip_by_value cannot handle None values...
+    if grad is None:
+        return grad
+    return tf.clip_by_value(grad, -clip_val, clip_val)
+
 
 class SequentialVAE(Network):
     """
@@ -63,7 +72,7 @@ class SequentialVAE(Network):
     training. Note that the only difference between the training and denerative modes is now 
     q_phi(z_0) vs q_phi(z_0 | x).
     """
-    def __init__(self, dataset, batch_size, name, logger):
+    def __init__(self, dataset, batch_size, name, logger, version, base_dir):
         """
         Initialization of the network, defines parameters and constructs the network in tenforflow
         SEE ALSO: __init__ from abstract_network.py, which defines our superclass 'Network'
@@ -117,6 +126,7 @@ class SequentialVAE(Network):
         self.learning_rate = the learning rate to use during training
         self.reg_coeff_rate = decides the rate of which we increase the (coefficient of) regularization on latent 
                     variables from 0 to 1 over time. (It's an inverse exponential, 1-e^-t)
+        self.latent_pred_loss_coeff = the coefficient to the loss used in the "Latent InfoMax" version of the MC
 
         (Training params)
         self.save_freq = how frequently to save the network during training
@@ -130,19 +140,20 @@ class SequentialVAE(Network):
         :param batch_size: the batch size to use during training
         :param name: the name we are allocating this instand of the seqvae network 
         :param logger: a logger object, for logging 
+        :param version: the version of this network that we are training
+        :param base_dir: the base directory to use for saving any results
         :return: None
         """
-        Network.__init__(self, dataset, logger)
+        Network.__init__(self, dataset, logger, version, base_dir, name)
 
         self.dataset = dataset
         self.batch_size = batch_size
         self.data_dims = dataset.data_dims
-        self.name = name
         self.LOG = logger
 
         # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
         self.vlae_levels = 4
-        self.vlae_latent_dims = [15, 15, 15, 15]
+        self.vlae_latent_dims = [4, 4, 4, 4]
         self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
@@ -166,51 +177,61 @@ class SequentialVAE(Network):
         # Hyperparams and training params
         self.learning_rate = 0.0002
         self.reg_coeff_rate = 5000.0 # 1 epoch = 1000
+        self.latent_pred_loss_coeff = 0.5
         self.save_freq = 2000
         self.tb_summary_freq = 10
         self.add_debug_tb_variables = True
         self.clip_grads = True
-        self.clip_grad_value = 1.0
+        self.clip_grad_value = 10.0
 
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
+        # cur1
         if self.name == "sequential_vae_celebA_inhomog":
             # nothing
             pass
 
         elif self.name == "sequential_vae_celebA_homog":
             self.share_theta_weights = True
+            self.share_phi_weights = True
 
+        # cur2
         elif self.name == "sequential_vae_celebA_homog_early_stopping":
             self.share_theta_weights = True
-            self.homogeneous_operation = True
+            self.share_phi_weights = True
+            self.early_stopping_mc = True
+            self.mc_steps = 15
 
-        # current..
+        # cur3
         elif self.name == "sequential_vae_celebA_inhomog_inf_max":
             self.predict_latent_code = True
-            self.latent_prior_stddev = 128
 
-        # current..
+        # cur5
+        elif self.name == "sequential_vae_celebA_homog_inf_max":
+            self.share_theta_weights = True 
+            self.share_phi_weights = True
+            self.predict_latent_code = True
+
+        # cur4
+        elif self.name == "sequential_vae_celebA_homog_inf_max_early_stopping":
+            self.share_theta_weights = True 
+            self.share_phi_weights = True
+            self.predict_latent_code = True
+            self.mc_steps = 15
+            self.early_stopping_mc = True
+
         elif self.name == "sequential_vae_celebA_inhomog_inf_max_uniform":
             self.predict_latent_code = True
             self.use_uniform_prior = True
 
-        # current
         elif self.name == "vlae_celebA":
             self.mc_steps = 1
             self.vlae_latent_dims = [16, 16, 16, 16] # same latent size as 8 stage markov chain
             self.latent_dim = np.sum(self.vlae_latent_dims)
 
-        # current..
         elif self.name == "sequential_vae_celebA_homog_fixed_length":
             self.share_theta_weights = True 
-
-        # current..
-        elif self.name == "sequential_vae_celebA_homog_fixed_length_inf_max":
-            self.share_theta_weights = True 
-            self.predict_latent_code = True
-            self.latent_prior_stddev = 128
 
         elif self.name == "sequential_vae_lsun":
             self.vlae_latent_dims = [20, 30, 30, 30]
@@ -234,23 +255,32 @@ class SequentialVAE(Network):
         #     self.latent_dim = np.sum(self.ladder_dims)
         #     self.use_latent_pred = True
 
-        # python main.py --dataset=mnist --plot_reconstruction --netname=sequential_vae_mnist_inhomog
-        elif self.name == "sequential_vae_mnist_inhomog":
-            self.vlae_levels = 3
-            self.vlae_latent_dims = [2, 2, 2]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.image_sizes = [32, 16, 8, 4] 
-            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.mc_steps = 5
+        #c1
+        elif self.name == "c_inhomog":
+            pass
 
-        elif self.name == "sequential_vae_mnist_homog":
-            self.vlae_levels = 3
-            self.vlae_latent_dims = [8, 8, 8]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.image_sizes = [32, 16, 8, 4] 
-            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.mc_steps = 5
+        #c2
+        elif self.name == "m_homog":
             self.share_theta_weights = True
+            self.share_phi_weights = True
+
+        #c3
+        elif self.name == "c_early_stop":
+            self.mc_steps = 15
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.early_stopping_mc = True
+
+        #c4
+        elif self.name == "c_inhomog_inf_max":
+            self.mc_steps = 5
+            self.predict_latent_code = True
+
+        #c5
+        elif self.name == "c_homog_inf_max":
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.predict_latent_code = True
 
         elif self.name == "sequential_vae_mnist_homog_early_stopping":
             self.vlae_levels = 3
@@ -260,6 +290,7 @@ class SequentialVAE(Network):
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 15
             self.share_theta_weights = True
+            self.share_phi_weights = True
             self.early_stopping_mc = True
 
         elif self.name == "sequential_vae_mnist_share_all":
@@ -290,8 +321,8 @@ class SequentialVAE(Network):
             self.mc_steps = 5
             self.share_phi_weights = True
 
-        # python main.py --dataset=mnist --plot_reconstruction --netname=sequential_vae_mnist_inhomog_inf_max --version=1
-        elif self.name == "sequential_vae_mnist_inhomog_inf_max":
+        # python main.py --dataset=mnist --plot_reconstruction --netname=m_inhomog --version=1
+        elif self.name == "m_inhomog":
             self.vlae_levels = 3
             self.vlae_latent_dims = [2, 2, 2]
             self.latent_dim = np.sum(self.vlae_latent_dims)
@@ -386,7 +417,7 @@ class SequentialVAE(Network):
             self.generative_samples.append(generative_sample)
 
             # Compute and accumulate losses
-            self.compute_and_accumulate_loss(training_sample, latent_train, latent_mean, latent_stddev, step)
+            self.compute_and_accumulate_loss(prev_training_sample, training_sample, latent_train, latent_mean, latent_stddev, step)
 
         # Add tensorboard summary for the loss
         tf.summary.scalar("loss", self.loss)
@@ -483,7 +514,7 @@ class SequentialVAE(Network):
                 last_avg_val =  tf.reduce_mean(last_generative_sample, [1,2,3]) 
                 batch_mask = threshold(tf.minimum(improvements, last_avg_val), self.early_stopping_threshold)
                 tiled_mask = tf.tile(tf.reshape(batch_mask, [-1,1,1,1]), tf.stack([1] + generative_sample.get_shape().as_list()[1:]))
-                generative_sample = tf.multiply(tiled_generator_mask, self.generator_samples[step])
+                generative_sample = tf.multiply(tiled_mask, generative_sample)
 
         return training_sample, generative_sample
 
@@ -556,7 +587,7 @@ class SequentialVAE(Network):
             normal_distr = tf.contrib.distributions.MultivariateNormalDiag(latent_mean, latent_stddev)
             latent_probs = normal_distr.prob(latent_sample)
 
-            # Compute norm
+            # Compute squared norm
             diff = training_sample - prev_training_sample
             norms = tf.reduce_sum(diff ** 2, axis=[1,2,3])
 
@@ -564,7 +595,7 @@ class SequentialVAE(Network):
             weighted_norms = latent_probs * norms
 
             # set loss to be negative, so we maximize
-            self.pred_latent_loss = self.reg_coeff * -tf.reduce_sum(weighted_norms)
+            self.pred_latent_loss = self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
             tf.summary.scalar("pred_latent_loss_step_%d" % step, self.pred_latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
@@ -620,7 +651,9 @@ class SequentialVAE(Network):
         If we are predicting the latent code, only want to have the latent prediction variables (phi) try to maximize 
         the varience of the output (it would be silly to make this an objective of the generative model (theta))
 
-        Also performs some processing on the gradients, including gradient clipping
+        Also performs some processing on the gradients, including gradient clipping. Because tf is silly, if a grad is 
+        zero, it returns a None tensor, AND, tf.clip_by_value cannot handle None values.... So we use the helper function 
+        'clip_grad_if_not_none', to check for if the value is none to get around this problem
 
         And computes some useful sanity checks to watch in training if we're debugging
         """
@@ -632,12 +665,12 @@ class SequentialVAE(Network):
 
         grads = optimizer.compute_gradients(self.loss, var_list=all_vars)
         if self.clip_grads:
-            grads = [(tf.clip_by_value(grad, -self.clip_grad_value, self.clip_grad_value), var) for grad, var in grads]
+            grads = [(clip_grad_if_not_none(grad, self.clip_grad_value), var) for grad, var in grads]
         elbo_train_op = optimizer.apply_gradients(grads)
 
         if self.add_debug_tb_variables:
-            theta_weights_norm = tf.global_norm(zip(*theta_vars)[0])
-            phi_weights_norm = tf.global_norm(zip(*phi_vars)[0])
+            theta_weights_norm = tf.global_norm(theta_vars)
+            phi_weights_norm = tf.global_norm(phi_vars)
 
             theta_elbo_grads = [grad for grad, var in grads if ("theta" in var.name)]
             phi_elbo_grads = [grad for grad, var in grads if ("phi" in var.name)]
@@ -645,8 +678,8 @@ class SequentialVAE(Network):
             theta_elbo_grads_norm = tf.global_norm(theta_elbo_grads)
             phi_elbo_grads_norm = tf.global_norm(phi_elbo_grads)
 
-            theta_elbo_update_ratio = self.learning_rate * theta_grads_norm / theta_weights_norm
-            phi_elbo_update_ratio = self.learning_rate * phi_grads_norm / phi_weights_norm
+            theta_elbo_update_ratio = self.learning_rate * theta_elbo_grads_norm / theta_weights_norm
+            phi_elbo_update_ratio = self.learning_rate * phi_elbo_grads_norm / phi_weights_norm
 
             tf.summary.scalar("theta_weights_norm", theta_weights_norm)
             tf.summary.scalar("phi_weights_norm", phi_weights_norm)
@@ -657,17 +690,17 @@ class SequentialVAE(Network):
 
 
         if not self.predict_latent_code:
-            self.trian_op = elbo_train_op
+            self.train_op = elbo_train_op
 
         else:
             grads = optimizer.compute_gradients(self.pred_latent_loss, var_list=all_vars)
             if self.clip_grads:
-                grads = [(tf.clip_by_value(grad, -self.clip_grad_value, self.clip_grad_value), var) for grad, var in grads]
+                grads = [(clip_grad_if_not_none(grad, self.clip_grad_value), var) for grad, var in grads]
             pred_latent_train_op = optimizer.apply_gradients(grads)
 
             if self.add_debug_tb_variables:
                 phi_latent_pred_grads_norm = tf.global_norm(zip(*grads)[0])
-                phi_latent_pred_update_ratio = self.learning_rate * phi_latent_pred_grad_norm / phi_weights_norm
+                phi_latent_pred_update_ratio = self.learning_rate * phi_latent_pred_grads_norm / phi_weights_norm
 
                 tf.summary.scalar("phi_latent_pred_grads_norm", phi_latent_pred_grads_norm)
                 tf.summary.scalar("phi_latent_pred_update_ratio", phi_latent_pred_update_ratio)
@@ -867,17 +900,22 @@ class SequentialVAE(Network):
         Latent variables take the form of multivariate gaussians (independent in each dimension), so to represent it, 
         we simply output a mean and std_dev for each dimension
 
+        In Latent InfoMax mode, the first step recognition takes the training sample and should be normalized to a 
+        unit gaussian. Otherwise, we don't do that. So in latent infomax mode 
+
         :param input_batch: the input to encode (in the math this is x)
         :param step: the step in the overall markov chain (used for variable scoping)
         :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
                 versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
         :return: the mean(s) and std_dev(s) of the latent state
         """
-        if self.share_phi_weights:
+        # network is different on step 0 (when input_batch = ground truth), vs a sample in info max mode. 
+        # otherwise, all the networks are the same outside of info max mode
+        if not self.share_phi_weights or (self.predict_latent_code and step == 0): 
+            scope_name = "phi/inference_step_%d" % step
+        else:
             scope_name = "phi/inference_network"
             reuse = tf.AUTO_REUSE
-        else:
-            scope_name = "phi/inference_step_%d" % step
 
         with tf.variable_scope(scope_name, reuse=reuse) as scope:
             cur_encoding = input_batch

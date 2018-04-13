@@ -20,7 +20,7 @@ class NoisyTrainer:
     test_num_iters = 5
     log_loss_freq = 20
 
-    def __init__(self, network, dataset, args, logger):
+    def __init__(self, network, dataset, args, logger, base_dir):
         """
         Initialize the trainer for a network.
 
@@ -39,6 +39,7 @@ class NoisyTrainer:
         :param dataset: the dataset (in the form of a dataset object) to be used for training (i.e. samples from p_data)
         :param args: a set of ageumtns/parameters to be used in training (defined in main.py)
         :param logger: a logger object, for logging 
+        :param base_dir: the base directory to save any data/files to
         :return: none
         """
         self.network = network
@@ -48,6 +49,7 @@ class NoisyTrainer:
         self.data_dims = self.dataset.data_dims
         self.fig = None
         self.LOG = logger
+        self.base_dir = base_dir
 
 
 
@@ -177,7 +179,7 @@ class NoisyTrainer:
                 self.dataset.display(reconstructed_images[img_index, :, :])
 
         # make the directory if it doesnt exist
-        img_folder = "models/" + self.network.name + "/reconstruction"
+        img_folder = self.base_dir + "/reconstruction"
         if not os.path.isdir(img_folder):
             os.makedirs(img_folder)
 

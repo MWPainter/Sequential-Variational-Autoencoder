@@ -14,7 +14,7 @@ parser.add_argument('--netname', type=str, default='')
 parser.add_argument('--batch_size', type=int, default=100)
 parser.add_argument('--db_path', type=str, default='')
 parser.add_argument('--version', type=int, default=1, help='A version number for this model.')
-parser.add_argument('--continue_training', type=bool, default=True, 
+parser.add_argument('--continue_training', type=bool, default=False, 
                     help='Used to indicate we should continue training an existing model.')
 parser.add_argument('--denoise_train', dest='denoise_train', action='store_true',
                     help='Use denoise training by adding Gaussian/salt and pepper noise')
@@ -48,19 +48,18 @@ if args.netname is None or args.netname == "":
 # Check if there's an error using versions + continue flags
 error = False
 error_msg = ""
-logpath = "models/" + args.netname + "_v" + str(args.version)
-if not os.path.isdir(logpath) and args.continue_training:
+base_dir = "models/" + args.netname + "_v" + str(args.version)
+if not os.path.isdir(base_dir) and args.continue_training:
     error = True
-    error_message = "Cannot continue training a model if the file doesn't exist."
-elif os.path.isdir(logpath) and not args.continue_training
+    error_msg = "Cannot continue training a model if the file doesn't exist."
+elif os.path.isdir(base_dir) and not args.continue_training:
     error = True
-    error_message = "Model already exists. Either use a new version number, or, set the --continue_training flag to True"
+    error_msg = "Model already exists. Either use a new version number, or, set the --continue_training flag to True"
 
 # Construct logger
-logpath = "models/" + args.netname + "_v" + str(args.version)
-if not os.path.isdir(logpath):
-    os.makedirs(logpath)
-logging.basicConfig(filename=logpath+"/log.log", level=logging.DEBUG)
+if not os.path.isdir(base_dir):
+    os.makedirs(base_dir)
+logging.basicConfig(filename=base_dir+"/log", level=logging.DEBUG)
 LOG = logging.getLogger(args.netname)
 
 # Log + print error and quit gracefully if there was one
@@ -83,7 +82,7 @@ else:
     exit(-1)
 
 # Construct network and trainer, then let it fly
-model = SequentialVAE(dataset, name=args.netname, batch_size=args.batch_size, logger=LOG)
-trainer = NoisyTrainer(model, dataset, args, LOG)
+model = SequentialVAE(dataset, name=args.netname, batch_size=args.batch_size, logger=LOG, version=args.version, base_dir=base_dir)
+trainer = NoisyTrainer(model, dataset, args, LOG, base_dir)
 trainer.train()
 
