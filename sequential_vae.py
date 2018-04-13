@@ -71,6 +71,11 @@ class SequentialVAE(Network):
     objective to train q_phi(z''_i | x_i), outlined in the paper. We still use q_phi(z_0 | x) for the first step when 
     training. Note that the only difference between the training and denerative modes is now 
     q_phi(z_0) vs q_phi(z_0 | x).
+
+
+    We also have another mode of operation, which is a prototype/for debugging, and temporarily calling 
+    "Infusion with Flat Convolutions Test". For details of how to run this and the (graphical) model, see the comments 
+    for 'self.generator_flat'.
     """
     def __init__(self, dataset, batch_size, name, logger, version, base_dir):
         """
@@ -129,6 +134,13 @@ class SequentialVAE(Network):
         "add": directly add the noise and the embeddings
         "gated_add": multiply the noise by a (trainable) variable, and then add
 
+        (Flat Infusion Test)
+        self.flat_conv_layers = the number of convolutional layers to use in the 
+        self.flat_conv_filter_sizes = filter sizes for the "flat convolutions" part of the network. (That is, the 
+                    filter sizes for each of the step in the markov chain). This should be a list exactly of length
+                    'self.flat_conv_layers' + 1.
+
+
         (Hyperparams)
         self.learning_rate = the learning rate to use during training
         self.reg_coeff_rate = decides the rate of which we increase the (coefficient of) regularization on latent 
@@ -182,6 +194,11 @@ class SequentialVAE(Network):
         self.add_noise_to_chain = False
         self.noise_stddevs = [8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0]
         self.combine_noise_method = "concat"
+
+        # "Flat Conv Infusion" parameters
+        self.flat_conv_layers = 6
+        self.flat_conv_filter_sizes = [self.data_dims[0], self.data_dims[0]*2, self.data_dims[0]*4, self.data_dims[0]*8
+                                       self.data_dims[0]*4, self.data_dims[0]*2, self.data_dims[0]]
 
         # Hyperparams and training params
         self.learning_rate = 0.0002
@@ -337,7 +354,16 @@ class SequentialVAE(Network):
             self.image_sizes = [32, 16, 8, 4] 
             self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
             self.mc_steps = 5
-            self.predict_latent_code = True
+
+        elif self.name == "m_noise":
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [4, 4, 4]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.mc_steps = 5
+            self.add_noise_to_chain = True
+            self.noise_stddevs = [8.0, 4.0, 1.0, 0.25, 0]
 
         else:
             self.LOG.error("Unknown network name %s" % self.name)
@@ -529,8 +555,9 @@ class SequentialVAE(Network):
 
         # Add any noise if we want to
         if self.add_noise_to_chain:
-            training_sample += self.noise_stddevs[step] * tf.random_normal(training_sample.shape)
-            generative_sample += self.noise_stddevs[step] * tf.random_normal(generative_sample.shape)
+            image_batch_shape = tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims)
+            training_sample += self.noise_stddevs[step] * tf.random_normal(image_batch_shape)
+            generative_sample += self.noise_stddevs[step] * tf.random_normal(image_batch_shape)
 
         return training_sample, generative_sample
 
@@ -1182,3 +1209,56 @@ class SequentialVAE(Network):
             tf.histogram_summary(name + "_noise_gate", gate)
             return latent + tf.multiply(gate, ladder_embedding)
 
+
+
+
+
+    def generator_flat(self, input_batch, latent, step, reuse=False):
+        """
+        For the flat test, we use a graphical model of x -> z_0 -> x_0 -> x_1 -> x_2 -> ....
+        where x -> z_0 -> x_0 is a VLAE
+        and x_0 -> x_1 -> x_2 -> .... are just "flat convolutions" (don't change the shape of the samples x_i).
+
+        Therefore, when we want to "run the flat test", we want on step 0 to use generator_ladder
+        and on all other steps, we just want to have a sequence of flat convolutions.
+
+        Thus, we would set self.inference = self.inference_ladder and self.generator = self.generator_flat
+
+        We should also have self.add_noise_to_chain set to true for this test
+
+        Note that we also need to make a new variable for the filter sizes, as the VLAE is still used, and 
+        self.filter_sizes is still used by that. So, we make a new array of filter sizes for each "flat step" in the 
+        variable self.flat_conv_filter_sizes
+
+        The aim is to understand if there is something inherent about encoding to a (small) latent space that 
+        causes the MC network constructed from VLAE's perform poorly.
+    
+        :param input_batch: the output from the previous step (none if this is the first step) 
+        :param latent: latent variables, sampled from a unit gaussian (only used in step 0 for the VLAE step)
+        :param step: the current step in the markov chain
+        :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
+                versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :return: the output sample(s) from the generative network, and the residual connection ratio
+        """
+        if step == 0:
+            return self.generator_ladder(input_batch, latent, step, reuse)
+
+        # variable scope setup 
+        if self.share_theta_weights and step != 0: # network is different on step 0 (no input_batch)
+            scope_name = "theta/generative_network_flat"
+            reuse = tf.AUTO_REUSE
+        else:
+            scope_name = "theta/generative_flat_step_%d" % step
+
+        # just many flat convolutional layers
+        with tf.variable_scope(scope_name, reuse=reuse) as scope:
+            hidden_layer = input_batch
+
+            for level in range(self.flat_conv_layers-1):
+                hidden_layer = conv2d_bn_lrelu(hidden_layer, self.flat_conv_filter_sizes[level+1], [4,4], 1)
+
+            # Final layer to get the output (normalize to datasets range of values)
+            # Return a 0 to be consistent with the 'resnet connection' return val from the generator_ladder function
+            output = conv2d(hidden_layer, self.data_dims[-1], [4,4], 1, activation_fn=tf.sigmoid)
+            output = (self.dataset.range[1] - self.dataset.range[0]) * output + self.dataset.range[0]
+            return output, 0
