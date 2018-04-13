@@ -93,7 +93,7 @@ class NoisyTrainer:
             # occasionally test + visualize
             if iteration % self.args.vis_frequency == 0:
                 test_error = self.test(iteration // self.args.vis_frequency)
-                self.LOG.info("Reconstruction error @%d per pixel: " % iteration, test_error)
+                self.LOG.info("Reconstruction error @%d per pixel: %d" % iteration, test_error)
                 self.network.visualize(iteration // self.args.vis_frequency)
 
             # one training iter
