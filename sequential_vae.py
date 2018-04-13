@@ -114,6 +114,13 @@ class SequentialVAE(Network):
                     (in BOTH gnerative and training samples).
         self.latent_prior_stddev = the stddev on the prior that we use for the latent space (set to 1.0 for default)
         self.use_uniform_prior = if we want to use a uniform prior (but Gaussian estimation)
+        self.add_noise_to_chain = if we want to add noise to samples in the chain. (N.B. This is technically what we 
+                    should do, as the 'decoder' or 'generative' model outputs a mean of a (diagonal) Gaussian 
+                    distribution). Outputting the mean is correct in a regular vae (as the Max Likelihood estimate), 
+                    however, when used in a chain, we should actually sample the variable).
+        self.noise_stddevs = an array which must be exactly of lenght 'self.mc_steps', defining the std_dev for the 
+                    Gaussian noise added at each step, if 'self.add_noise_to_chain' is true. (We still want to output 
+                    the MLE estimate from the whole chain, so we should set self.noise_stddevs[-1] == 0.0).
         self.combine_noise_method = 'concat'/'add'/'gated_add', and specifies how to add in (latent) noise into the 
                     embeddings of the autoencoder (see combined_noise for more detail)
 
@@ -171,7 +178,9 @@ class SequentialVAE(Network):
         self.early_stopping_threshold = 0.0000000001
         self.predict_latent_code = False
         self.latent_prior_stddev = 1.0
-        self.use_uniform_prior = False
+        self.use_uniform_prior = False 
+        self.add_noise_to_chain = False
+        self.noise_stddevs = [8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0]
         self.combine_noise_method = "concat"
 
         # Hyperparams and training params
@@ -260,7 +269,7 @@ class SequentialVAE(Network):
             pass
 
         #c2
-        elif self.name == "m_homog":
+        elif self.name == "c_homog":
             self.share_theta_weights = True
             self.share_phi_weights = True
 
@@ -273,7 +282,6 @@ class SequentialVAE(Network):
 
         #c4
         elif self.name == "c_inhomog_inf_max":
-            self.mc_steps = 5
             self.predict_latent_code = True
 
         #c5
@@ -488,6 +496,9 @@ class SequentialVAE(Network):
         If we have self.early_stopping_mc = True, then we need to identify if this step (when running in GENERATOR mode) 
         didn't make a significant enough improvement. If so, we return a zeroed 'generative_sample'
 
+        We also add noise to the samples if 'self.add_noise_to_chain' is true, and the amount of noise (for now) is 
+        hard coded into an array, 'self.noise_stddevs'
+
         :param last_training_sample: The last training sample, x_t, when run in training mode
         :param last_generative_sample: The last generative sample, x_t, when run in generative mode
         :param latent_train: The latent variable, z''_t, when run in training mode
@@ -515,6 +526,11 @@ class SequentialVAE(Network):
                 batch_mask = threshold(tf.minimum(improvements, last_avg_val), self.early_stopping_threshold)
                 tiled_mask = tf.tile(tf.reshape(batch_mask, [-1,1,1,1]), tf.stack([1] + generative_sample.get_shape().as_list()[1:]))
                 generative_sample = tf.multiply(tiled_mask, generative_sample)
+
+        # Add any noise if we want to
+        if self.add_noise_to_chain:
+            training_sample += self.noise_stddevs[step] * tf.random_normal(training_sample.shape)
+            generative_sample += self.noise_stddevs[step] * tf.random_normal(generative_sample.shape)
 
         return training_sample, generative_sample
 
