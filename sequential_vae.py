@@ -172,7 +172,7 @@ class SequentialVAE(Network):
 
         # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
         self.vlae_levels = 4
-        self.vlae_latent_dims = [4, 4, 4, 4]
+        self.vlae_latent_dims = [3, 3, 3, 3]
         self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
@@ -197,7 +197,7 @@ class SequentialVAE(Network):
 
         # "Flat Conv Infusion" parameters
         self.flat_conv_layers = 6
-        self.flat_conv_filter_sizes = [self.data_dims[0], self.data_dims[0]*2, self.data_dims[0]*4, self.data_dims[0]*8
+        self.flat_conv_filter_sizes = [self.data_dims[0], self.data_dims[0]*2, self.data_dims[0]*4, self.data_dims[0]*8,
                                        self.data_dims[0]*4, self.data_dims[0]*2, self.data_dims[0]]
 
         # Hyperparams and training params
@@ -281,31 +281,50 @@ class SequentialVAE(Network):
         #     self.latent_dim = np.sum(self.ladder_dims)
         #     self.use_latent_pred = True
 
-        #c1
         elif self.name == "c_inhomog":
             pass
 
-        #c2
         elif self.name == "c_homog":
             self.share_theta_weights = True
             self.share_phi_weights = True
 
-        #c3
         elif self.name == "c_early_stop":
             self.mc_steps = 15
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.early_stopping_mc = True
 
-        #c4
+        #c1
         elif self.name == "c_inhomog_inf_max":
             self.predict_latent_code = True
 
-        #c5
+        #c2
         elif self.name == "c_homog_inf_max":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.predict_latent_code = True
+
+        #c3 
+        elif self.name == "c_sample_images":
+            self.add_noise_to_chain = True
+
+
+        #c4 
+        elif self.name == "c_infusion_test":
+            self.share_theta_weights = False
+            self.share_phi_weights = False
+            self.generator = self.generator_flat
+            self.add_noise_to_chain = True
+
+        #c5
+        elif self.name == "c_homog_infusion_test":
+            self.share_theta_weights = False
+            self.share_phi_weights = False
+            self.generator = self.generator_flat
+            self.add_noise_to_chain = True
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+
 
         elif self.name == "sequential_vae_mnist_homog_early_stopping":
             self.vlae_levels = 3
@@ -631,14 +650,14 @@ class SequentialVAE(Network):
             latent_probs = normal_distr.prob(latent_sample)
 
             # Compute squared norm
-            diff = training_sample - prev_training_sample
-            norms = tf.reduce_sum(diff ** 2, axis=[1,2,3])
+            diffs = training_sample - prev_training_sample
+            norms = tf.reduce_sum(diffs ** 2, axis=[1,2,3])
 
             # Weight by the probability to account for potentially bad samples
             weighted_norms = latent_probs * norms
 
             # set loss to be negative, so we maximize
-            self.pred_latent_loss = self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
+            self.pred_latent_loss += self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
             tf.summary.scalar("pred_latent_loss_step_%d" % step, self.pred_latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
@@ -736,7 +755,7 @@ class SequentialVAE(Network):
             self.train_op = elbo_train_op
 
         else:
-            grads = optimizer.compute_gradients(self.pred_latent_loss, var_list=all_vars)
+            grads = optimizer.compute_gradients(self.pred_latent_loss, var_list=phi_vars)
             if self.clip_grads:
                 grads = [(clip_grad_if_not_none(grad, self.clip_grad_value), var) for grad, var in grads]
             pred_latent_train_op = optimizer.apply_gradients(grads)
