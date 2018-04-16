@@ -441,6 +441,7 @@ class SequentialVAE(Network):
         self.generative_samples = []
 
         self.loss = 0.0
+        self.pred_latent_loss = 0.0
         self.final_loss = None
 
         training_sample = None
