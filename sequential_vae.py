@@ -315,6 +315,18 @@ class SequentialVAE(Network):
             self.share_phi_weights = False
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
+        #
+        elif self.name == "m_infusion_test":
+            self.share_theta_weights = False
+            self.share_phi_weights = False
+            self.generator = self.generator_flat
+            self.add_noise_to_chain = True
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [2, 2, 2]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.mc_steps = 5
 
         elif self.name == "c_homog_infusion_test": 
             self.share_theta_weights = False
