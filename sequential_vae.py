@@ -176,7 +176,7 @@ class SequentialVAE(Network):
         self.image_sizes = [self.data_dims[0], self.data_dims[0] // 2, 
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
-        self.filter_sizes = [self.data_dims[-1], 24, 48, 96, 192, 384]
+        self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
 
         # SeqVAE parameters 
         self.share_theta_weights = False
@@ -192,7 +192,7 @@ class SequentialVAE(Network):
         self.latent_prior_stddev = 1.0
         self.use_uniform_prior = False 
         self.add_noise_to_chain = False
-        self.noise_stddevs = [8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0]
+        self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
         self.combine_noise_method = "concat"
 
         # "Flat Conv Infusion" parameters
@@ -284,9 +284,11 @@ class SequentialVAE(Network):
         elif self.name == "c_inhomog":
             pass
 
+        #c1
         elif self.name == "c_homog":
             self.share_theta_weights = True
             self.share_phi_weights = True
+            self.mc_steps = 25
 
         elif self.name == "c_early_stop":
             self.mc_steps = 15
@@ -294,11 +296,10 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.early_stopping_mc = True
 
-        #c1
+        #c2
         elif self.name == "c_inhomog_inf_max":
             self.predict_latent_code = True
 
-        #c2
         elif self.name == "c_homog_inf_max":
             self.share_theta_weights = True
             self.share_phi_weights = True
@@ -308,7 +309,6 @@ class SequentialVAE(Network):
         elif self.name == "c_sample_images":
             self.add_noise_to_chain = True
 
-
         #c4 
         elif self.name == "c_infusion_test":
             self.share_theta_weights = False
@@ -316,7 +316,6 @@ class SequentialVAE(Network):
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
 
-        #c5
         elif self.name == "c_homog_infusion_test":
             self.share_theta_weights = False
             self.share_phi_weights = False
@@ -470,6 +469,11 @@ class SequentialVAE(Network):
             self.training_samples.append(training_sample)
             self.generative_samples.append(generative_sample)
 
+            # Add some tensor board variables for debugging what's going on
+            if self.add_debug_tb_variables:
+                tf.summary.scalar("latent_mean_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_mean)))
+                tf.summary.scalar("latent_stddev_avg_step_%d" % step, tf.reduce_mean(tf.abs(latent_stddev)))
+
             # Compute and accumulate losses
             self.compute_and_accumulate_loss(prev_training_sample, training_sample, latent_train, latent_mean, latent_stddev, step)
 
@@ -567,7 +571,7 @@ class SequentialVAE(Network):
             # change between the two images (L2 norm) to detect lack of change. Threshold is a helper defined at the 
             # beginning of the file. To zero examples in the batch out, we compute a mask and multiply by that.
             if self.early_stopping_mc:
-                improvements = tf.reduce_mean(tf.square(generative_sample - last_generative_sample), [1,2,3])
+                improvements = tf.sqrt(tf.reduce_sum(tf.square(generative_sample - last_generative_sample), [1,2,3]))
                 last_avg_val =  tf.reduce_mean(last_generative_sample, [1,2,3]) 
                 batch_mask = threshold(tf.minimum(improvements, last_avg_val), self.early_stopping_threshold)
                 tiled_mask = tf.tile(tf.reshape(batch_mask, [-1,1,1,1]), tf.stack([1] + generative_sample.get_shape().as_list()[1:]))
@@ -1187,6 +1191,9 @@ class SequentialVAE(Network):
 
         # project them into the correct image sizes to be added/concatenated to the appropriate intermediate representations
         for i in range(self.vlae_levels-1):
+
+
+
             ladder_step_size = self.image_sizes[i+1] * self.image_sizes[i+1] * self.filter_sizes[i+1]
             ladder[i] = fc_bn_lrelu(ladder[i], ladder_step_size)
             ladder[i] = tf.reshape(ladder[i], [-1, self.image_sizes[i+1], self.image_sizes[i+1], self.filter_sizes[i+1]])
