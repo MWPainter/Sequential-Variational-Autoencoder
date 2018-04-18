@@ -316,7 +316,7 @@ class SequentialVAE(Network):
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
 
-        elif self.name == "c_homog_infusion_test":
+        elif self.name == "c_homog_infusion_test": 
             self.share_theta_weights = False
             self.share_phi_weights = False
             self.generator = self.generator_flat
