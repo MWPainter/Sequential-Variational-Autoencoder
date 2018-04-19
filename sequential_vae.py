@@ -117,6 +117,8 @@ class SequentialVAE(Network):
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
                     homogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
                     (in BOTH gnerative and training samples).
+        self.latent_mean_clip = a value to clip (per dimension) the latent mean predictions, set to inf by default to 
+                    not provide any clipping
         self.latent_prior_stddev = the stddev on the prior that we use for the latent space (set to 1.0 for default)
         self.use_uniform_prior = if we want to use a uniform prior (but Gaussian estimation)
         self.add_noise_to_chain = if we want to add noise to samples in the chain. (N.B. This is technically what we 
@@ -189,6 +191,8 @@ class SequentialVAE(Network):
         self.early_stopping_mc = False
         self.early_stopping_threshold = 0.0000000001
         self.predict_latent_code = False
+        self.latent_mean_clip = np.inf
+        self.predict_latent_code_with_regularization = False    # TEMPORARY VARIABLE FOR SOME TESTS
         self.latent_prior_stddev = 1.0
         self.use_uniform_prior = False 
         self.add_noise_to_chain = False
@@ -197,8 +201,8 @@ class SequentialVAE(Network):
 
         # "Flat Conv Infusion" parameters
         self.flat_conv_layers = 6
-        self.flat_conv_filter_sizes = [self.data_dims[0], self.data_dims[0]*2, self.data_dims[0]*4, self.data_dims[0]*8,
-                                       self.data_dims[0]*4, self.data_dims[0]*2, self.data_dims[0]]
+        self.flat_conv_filter_sizes = [self.data_dims[-1], self.data_dims[-1]*2, self.data_dims[-1]*4, self.data_dims[-1]*8,
+                                       self.data_dims[-1]*4, self.data_dims[-1]*2, self.data_dims[-1]]
 
         # Hyperparams and training params
         self.learning_rate = 0.0002
@@ -213,7 +217,6 @@ class SequentialVAE(Network):
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
-        # cur1
         if self.name == "sequential_vae_celebA_inhomog":
             # nothing
             pass
@@ -222,24 +225,20 @@ class SequentialVAE(Network):
             self.share_theta_weights = True
             self.share_phi_weights = True
 
-        # cur2
         elif self.name == "sequential_vae_celebA_homog_early_stopping":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.early_stopping_mc = True
             self.mc_steps = 15
 
-        # cur3
         elif self.name == "sequential_vae_celebA_inhomog_inf_max":
             self.predict_latent_code = True
 
-        # cur5
         elif self.name == "sequential_vae_celebA_homog_inf_max":
             self.share_theta_weights = True 
             self.share_phi_weights = True
             self.predict_latent_code = True
 
-        # cur4
         elif self.name == "sequential_vae_celebA_homog_inf_max_early_stopping":
             self.share_theta_weights = True 
             self.share_phi_weights = True
@@ -284,7 +283,6 @@ class SequentialVAE(Network):
         elif self.name == "c_inhomog":
             pass
 
-        #c1
         elif self.name == "c_homog":
             self.share_theta_weights = True
             self.share_phi_weights = True
@@ -296,23 +294,38 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.early_stopping_mc = True
 
-        #c2
         elif self.name == "c_inhomog_inf_max":
             self.predict_latent_code = True
 
-        elif self.name == "c_homog_inf_max":
+        #2 - 1
+        elif self.name == "c_homog_inf_max_clipped":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.predict_latent_code = True
+            self.latent_mean_clip = 2.0
 
-        #c3 
+        #3 - 1
+        elif self.name == "c_homog_inf_max_regularized":
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.predict_latent_code = True
+            self.predict_latent_code_with_regularization = True
+
+        #c1 - 7
         elif self.name == "c_sample_images":
             self.add_noise_to_chain = True
 
-        #c4 
+        #c4 - 11, 1-14
         elif self.name == "c_infusion_test":
             self.share_theta_weights = False
             self.share_phi_weights = False
+            self.generator = self.generator_flat
+            self.add_noise_to_chain = True
+
+        #4 - 1
+        elif self.name == "c_homog_infusion_test":
+            self.share_theta_weights = True
+            self.share_phi_weights = True
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
         #
@@ -656,7 +669,7 @@ class SequentialVAE(Network):
             self.loss += 16 * reconstruction_loss
 
         # Add regularization. Only want to add regularization in Latent InfoMax mode on the first step
-        if not self.predict_latent_code or step == 0:
+        if not self.predict_latent_code or self.predict_latent_code_with_regularization or step == 0:
             self.loss += self.reg_coeff * regularization_loss
 
         # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
@@ -907,6 +920,7 @@ class SequentialVAE(Network):
         if use_gui is True and self.mc_fig is None:
             self.mc_fig, self.mc_ax = plt.subplots(1, 2)
 
+
         for i in range(2):
             if i == 0:
                 bx = self.dataset.next_batch(batch_size)
@@ -947,6 +961,7 @@ class SequentialVAE(Network):
             else:
                 misc.imsave(os.path.join(folder_name, 'train_epoch%d.png' % epoch), v)
                 misc.imsave(os.path.join(folder_name, 'train_current.png'), v)
+
         if use_gui is True:
             plt.draw()
             plt.pause(0.01)
@@ -977,7 +992,8 @@ class SequentialVAE(Network):
         (because then the generator ladder will not work)
 
         Latent variables take the form of multivariate gaussians (independent in each dimension), so to represent it, 
-        we simply output a mean and std_dev for each dimension
+        we simply output a mean and std_dev for each dimension. Means can be clipped at a certain max magnitude, if we 
+        wish.
 
         In Latent InfoMax mode, the first step recognition takes the training sample and should be normalized to a 
         unit gaussian. Otherwise, we don't do that. So in latent infomax mode 
@@ -1010,6 +1026,7 @@ class SequentialVAE(Network):
                 # latent code at this level in the ladder
                 ladder = tf.reshape(cur_encoding, [-1, np.prod(cur_encoding.get_shape().as_list()[1:])])
                 ladder_mean = layers.fully_connected(ladder, self.vlae_latent_dims[level], activation_fn=tf.identity)
+                ladder_mean = tf.clip_by_value(ladder_mean, -self.latent_mean_clip, self.latent_mean_clip)
                 ladder_stddev = layers.fully_connected(ladder, self.vlae_latent_dims[level], activation_fn=tf.sigmoid)
 
                 # maintain lists variables
@@ -1024,6 +1041,7 @@ class SequentialVAE(Network):
             cur_encoding = fc_bn_lrelu(cur_encoding, self.filter_sizes[self.vlae_levels])
 
             ladder_mean = layers.fully_connected(ladder, self.vlae_latent_dims[self.vlae_levels-1], activation_fn=tf.identity)
+            ladder_mean = tf.clip_by_value(ladder_mean, -self.latent_mean_clip, self.latent_mean_clip)
             ladder_stddev = layers.fully_connected(ladder, self.vlae_latent_dims[self.vlae_levels-1], activation_fn=tf.sigmoid)
 
             image_sizes.append(image_size)
