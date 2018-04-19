@@ -297,32 +297,30 @@ class SequentialVAE(Network):
         elif self.name == "c_inhomog_inf_max":
             self.predict_latent_code = True
 
-        #2 - 1
+        #2 - 26 | 4 - 27
         elif self.name == "c_homog_inf_max_clipped":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.predict_latent_code = True
-            self.latent_mean_clip = 2.0
+            self.latent_mean_clip = 8.0
 
-        #3 - 1
+        #3 - 26 | 
         elif self.name == "c_homog_inf_max_regularized":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.predict_latent_code = True
             self.predict_latent_code_with_regularization = True
 
-        #c1 - 7
         elif self.name == "c_sample_images":
             self.add_noise_to_chain = True
 
-        #c4 - 11, 1-14
         elif self.name == "c_infusion_test":
             self.share_theta_weights = False
             self.share_phi_weights = False
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
 
-        #4 - 1
+        #1 - 21
         elif self.name == "c_homog_infusion_test":
             self.share_theta_weights = True
             self.share_phi_weights = True
@@ -677,18 +675,19 @@ class SequentialVAE(Network):
         if self.predict_latent_code and prev_training_sample is not None:
             # probs of latent vars
             normal_distr = tf.contrib.distributions.MultivariateNormalDiag(latent_mean, latent_stddev)
-            latent_probs = normal_distr.prob(latent_sample)
+            latent_probs = tf.exp(normal_distr.log_prob(latent_sample))
 
             # Compute squared norm
             diffs = training_sample - prev_training_sample
             norms = tf.reduce_sum(diffs ** 2, axis=[1,2,3])
 
             # Weight by the probability to account for potentially bad samples
-            weighted_norms = latent_probs * norms
+            weighted_norms = norms#latent_probs * norms
 
             # set loss to be negative, so we maximize
-            self.pred_latent_loss += self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
-            tf.summary.scalar("pred_latent_loss_step_%d" % step, self.pred_latent_loss)
+            latent_loss = self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
+            self.pred_latent_loss += latent_loss
+            tf.summary.scalar("pred_latent_loss_step_%d" % step, latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
         self.final_loss = tf.reduce_mean(reconstruction_loss)

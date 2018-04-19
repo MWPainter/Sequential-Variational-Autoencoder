@@ -91,14 +91,12 @@ class NoisyTrainer:
             iter_beg_time = time.time()
 
             # occasionally test + visualize
-            self.LOG.debug("test+vis")
             if iteration % self.args.vis_frequency == 0:
                 test_error = self.test(iteration // self.args.vis_frequency)
                 self.LOG.info("Reconstruction error per pixel: %f, @ iteration: %d" % (test_error, iteration))
                 self.network.visualize(iteration // self.args.vis_frequency)
 
             # one training iter
-            self.LOG.debug("training iter")
             input_batch = self.dataset.next_batch(self.batch_size)
             target_batch = input_batch
             if self.args.denoise_train:
@@ -106,7 +104,6 @@ class NoisyTrainer:
             train_loss = self.network.train(input_batch, target_batch)
 
             # occasionally log losses
-            self.LOG.debug("log losses")
             if iteration % NoisyTrainer.log_loss_freq == 0:
                 self.LOG.info("Iteration %d: Reconstruction loss %f, time per iter %fs" %
                         (iteration, train_loss, time.time() - iter_beg_time))
