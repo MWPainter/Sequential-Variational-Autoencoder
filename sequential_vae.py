@@ -207,7 +207,7 @@ class SequentialVAE(Network):
         # Hyperparams and training params
         self.learning_rate = 0.0002
         self.reg_coeff_rate = 5000.0 # 1 epoch = 1000
-        self.latent_pred_loss_coeff = 0.5
+        self.latent_pred_loss_coeff = 0.001 # 0.5, and reduce mean did really well, but very slow...
         self.save_freq = 2000
         self.tb_summary_freq = 10
         self.add_debug_tb_variables = True
@@ -294,17 +294,26 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.early_stopping_mc = True
 
+        # 2' - 31 
+        # TODO
         elif self.name == "c_inhomog_inf_max":
             self.predict_latent_code = True
+            self.latent_mean_clip = 8.0
 
-        #2 - 26 | 4 - 27
+        #2 - 26 | 1' - 33 
+        # TODO
         elif self.name == "c_homog_inf_max_clipped":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.predict_latent_code = True
             self.latent_mean_clip = 8.0
 
-        #3 - 26 | 
+        #4 - 1
+        elif self.name == "c_inhomog_inf_max_clipped":
+            self.predict_latent_code = True
+            self.latent_mean_clip = 8.0
+
+        #3 - 26 
         elif self.name == "c_homog_inf_max_regularized":
             self.share_theta_weights = True
             self.share_phi_weights = True
@@ -314,13 +323,18 @@ class SequentialVAE(Network):
         elif self.name == "c_sample_images":
             self.add_noise_to_chain = True
 
+        elif self.name == "c_homog_sample_images":
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.add_noise_to_chain = True
+
         elif self.name == "c_infusion_test":
             self.share_theta_weights = False
             self.share_phi_weights = False
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
 
-        #1 - 21
+        #3' - 21
         elif self.name == "c_homog_infusion_test":
             self.share_theta_weights = True
             self.share_phi_weights = True
@@ -495,7 +509,9 @@ class SequentialVAE(Network):
             # Add some tensor board variables for debugging what's going on
             if self.add_debug_tb_variables:
                 tf.summary.scalar("latent_mean_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_mean)))
-                tf.summary.scalar("latent_stddev_avg_step_%d" % step, tf.reduce_mean(tf.abs(latent_stddev)))
+                tf.summary.scalar("latent_mean_avg_step_%d" % step, tf.reduce_mean(latent_mean))
+                tf.summary.scalar("latent_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_stddev)))
+                tf.summary.scalar("latent_stddev_avg_step_%d" % step, tf.reduce_mean(latent_stddev))
 
             # Compute and accumulate losses
             self.compute_and_accumulate_loss(prev_training_sample, training_sample, latent_train, latent_mean, latent_stddev, step)
