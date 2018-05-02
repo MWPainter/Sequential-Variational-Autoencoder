@@ -125,6 +125,7 @@ class SequentialVAE(Network):
                     should do, as the 'decoder' or 'generative' model outputs a mean of a (diagonal) Gaussian 
                     distribution). Outputting the mean is correct in a regular vae (as the Max Likelihood estimate), 
                     however, when used in a chain, we should actually sample the variable).
+        self.predict_generator_noise = should we predeict the stddev of the Gaussian output by a generator network
         self.noise_stddevs = an array which must be exactly of lenght 'self.mc_steps', defining the std_dev for the 
                     Gaussian noise added at each step, if 'self.add_noise_to_chain' is true. (We still want to output 
                     the MLE estimate from the whole chain, so we should set self.noise_stddevs[-1] == 0.0).
@@ -196,6 +197,7 @@ class SequentialVAE(Network):
         self.latent_prior_stddev = 1.0
         self.use_uniform_prior = False 
         self.add_noise_to_chain = False
+        self.predict_generator_noise = False
         self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
         self.combine_noise_method = "concat"
 
@@ -450,9 +452,13 @@ class SequentialVAE(Network):
                     'self.latent_pred_loss', as that's a little unstable early on in training.
         
         self.latents = placeholders for latent variables, use these when we want to use the network generatively
+        self.training_mles = the means/maximum likelihood estimates of samples along the chain. These are the means 
+                    of the Diagonal Gaussian's used to generate the samples in the network running in the training mode
         self.training_samples = samples generated along the chain, use these one's when training the network this uses a 
                     latent variable that's sampled using the mean and stddev from inference network of the previous 
                     sample
+        self.generative_mles = the means/maximum likelihood estimates of samples along the chain. These are the means 
+                    of the Diagonal Gaussian's used to generate the samples in the network running in the generative mode
         self.generative_samples = samples generated along the chain, use these one's when running the generatively this 
                     uses the latent variable fed into the placeholder in self.latents
 
@@ -473,7 +479,9 @@ class SequentialVAE(Network):
         self.reg_coeff = tf.placeholder_with_default(1.0, shape=[], name="regularization_coefficient")
 
         self.latents = []
+        self.training_mles = []
         self.training_samples = []
+        self.training_mles = []
         self.generative_samples = []
 
         self.loss = 0.0
@@ -484,6 +492,7 @@ class SequentialVAE(Network):
         generative_sample = None
 
         for step in range(self.mc_steps):
+            prev_training_mle = training_mle
             prev_training_sample = training_sample
             prev_generative_sample = generative_sample
 
@@ -501,20 +510,25 @@ class SequentialVAE(Network):
             # Make recognition, p_phi(z_t|x), and generative, p_theta(x_t|z_t,x_t-1), networks. Append samples from them
             # latent_train = the latent variable in training mode, latent_generative = in generative mode
             latent_mean, latent_stddev, latent_train, latent_generative = self.create_recognition_network(step=step)
-            training_sample, generative_sample = self.create_generator_network(prev_training_sample, prev_generative_sample, 
-                                                                              latent_train, latent_generative, step)
+            generator_network_output = self.create_generator_network(prev_training_sample, prev_generative_sample, 
+                                                                                latent_train, latent_generative, step)
+            training_mle, training_stddevs, training_sample, generative_mle, generative_sample = generator_network_output
+
+            self.training_mles.append(training_mle)
             self.training_samples.append(training_sample)
+            self.generative_mles.append(generative_mle)
             self.generative_samples.append(generative_sample)
 
             # Add some tensor board variables for debugging what's going on
             if self.add_debug_tb_variables:
+                tf.summary.scalar("training_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(training_stddevs)))
                 tf.summary.scalar("latent_mean_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_mean)))
                 tf.summary.scalar("latent_mean_avg_step_%d" % step, tf.reduce_mean(latent_mean))
                 tf.summary.scalar("latent_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_stddev)))
                 tf.summary.scalar("latent_stddev_avg_step_%d" % step, tf.reduce_mean(latent_stddev))
 
             # Compute and accumulate losses
-            self.compute_and_accumulate_loss(prev_training_sample, training_sample, latent_train, latent_mean, latent_stddev, step)
+            self.compute_and_accumulate_loss(prev_training_mle, training_mle, training_stddevs, latent_train, latent_mean, latent_stddev, step)
 
         # Add tensorboard summary for the loss
         tf.summary.scalar("loss", self.loss)
@@ -585,8 +599,11 @@ class SequentialVAE(Network):
         If we have self.early_stopping_mc = True, then we need to identify if this step (when running in GENERATOR mode) 
         didn't make a significant enough improvement. If so, we return a zeroed 'generative_sample'
 
-        We also add noise to the samples if 'self.add_noise_to_chain' is true, and the amount of noise (for now) is 
-        hard coded into an array, 'self.noise_stddevs'
+        We also add noise to the samples if 'self.add_noise_to_chain' is true, and the amount of noise is returned by 
+        the generator networks. If self.predict_generator_noise is true, the the generator network will train and learn 
+        to predict the stddev to use with the sample (i.e. it outputs how "confident" it is in the sample it produced).
+        If 'self.add_noise_to_chain' is false, then self.generator should return the correct value from 
+        self.noise_stddevs, to use a fixed noise with that 
 
         :param last_training_sample: The last training sample, x_t, when run in training mode
         :param last_generative_sample: The last generative sample, x_t, when run in generative mode
@@ -597,11 +614,11 @@ class SequentialVAE(Network):
         :return generative_sample: the next generative sample (for when running int generative mode)
         """
         if step == 0:
-            training_sample = self.generator(None, latent_train, step)
-            generative_sample = self.generator(None, latent_gen, step, reuse=True)
+            training_mle, training_stddev, _ = self.generator(None, latent_train, step)
+            generative_mle, generative_stddev, _ = self.generator(None, latent_gen, step, reuse=True)
         else:
-            training_sample, resnet_ratios = self.generator(last_training_sample, latent_train, step)
-            generative_sample, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
+            training_mle, training_stddev, resnet_ratios = self.generator(last_training_sample, latent_train, step)
+            generative_mle, generative_stddev, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
             if self.add_debug_tb_variables and step is not None:
                 tf.summary.scalar("resnet_gate_weight_step_%d" % step, tf.reduce_mean(resnet_ratios))
 
@@ -616,27 +633,30 @@ class SequentialVAE(Network):
                 tiled_mask = tf.tile(tf.reshape(batch_mask, [-1,1,1,1]), tf.stack([1] + generative_sample.get_shape().as_list()[1:]))
                 generative_sample = tf.multiply(tiled_mask, generative_sample)
 
-        # Add any noise if we want to
-        if self.add_noise_to_chain:
-            image_batch_shape = tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims)
-            training_sample += self.noise_stddevs[step] * tf.random_normal(image_batch_shape)
-            generative_sample += self.noise_stddevs[step] * tf.random_normal(image_batch_shape)
+        # Add any noise indicated by the generator network
+        image_batch_shape = tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims)
+        training_sample = training_mle + training_stddev * tf.random_normal(image_batch_shape)
+        generative_sample = generative_mle + generative_stddev * tf.random_normal(image_batch_shape)
 
-        return training_sample, generative_sample
-
+        return training_mle, training_stddevs, training_sample, generative_mle, generative_sample
 
 
 
 
 
 
-    def compute_and_accumulate_loss(self, prev_training_sample, training_sample, latent_sample, latent_mean, latent_stddev, step):
+
+    def compute_and_accumulate_loss(self, prev_training_mle, training_mle, training_stddevs, latent_sample, 
+                                    latent_mean, latent_stddev, step):
         """
         *Should only be called from within 'self.construct_network'*
 
         Compute the ELBO loss for the given MC step. This means that we want to compute the reconstruction loss 
         of the training sample vs the target_placeholder (== the input). We also want to compute the KL distance to 
         the unit normal.
+
+        If we are predicting the generator noise, then we need to include the stddevs in the reconstruction loss (as 
+        we no longer assume that the stddev is 1/2).
 
         The function also accumulates losses in the variables self.loss
 
@@ -650,9 +670,12 @@ class SequentialVAE(Network):
         network), then we also wich to add the Latent InfoMax loss (see write up for math), defined in the paper (may 
         be named something other than "Latent InfoMax" later)
 
-        :param prev_training_sample: the previous training sample from running in training mode. At time 'step' = 0, this 
-                    should be None. Used only if we are running in Latent InfoMax mode, to compute the Latent InfoMax loss
-        :param training_sample: the current sample, when running in training mode, x_t
+        :param prev_training_mle: the previous training mle (output from generator network) running in training mode. 
+                    At time 'step' = 0, this should be None. Used only if we are running in Latent InfoMax mode, to 
+                    compute the Latent InfoMax loss
+        :param training_mle: the current mle, output from the generator network, when running in training mode, x_t
+        :param training_stddevs: the stddevs output from the generator network for the sample, when run in training mode, 
+                    this is the stddev of x_t
         :param latent_sample: a sample of the latent variable z_t, sampled from q_phi(z_t | x_t)
         :param latent_mean: The mean of the latent variable, z''_t, produced from the recognition network
         :param latent_stddev: The stddev's (per dim) of the latent variable z''_t, produced from the recognition network
@@ -667,8 +690,12 @@ class SequentialVAE(Network):
         :param step: the time step with respect to the MC
         :return: None
         """
+        if self.predict_generator_noise:
+            batch_reconstruction_loss = tf.reduce_mean(tf.log(training_stddevs) + 0.5 * tf.log(2 * np.pi) +
+                                                0.5 * tf.square((training_sample - self.target_placeholder) / (2 * training_stddevs)))
+        else:
+            batch_reconstruction_loss = tf.reduce_mean(tf.square(training_sample - self.target_placeholder), [1,2,3])
 
-        batch_reconstruction_loss = tf.reduce_mean(tf.square(training_sample - self.target_placeholder), [1,2,3])
         if not self.use_uniform_prior:
             batch_regularization_loss = tf.reduce_mean(-0.5 -tf.log(latent_stddev) +
                                                 0.5 * tf.square(latent_stddev) / (self.latent_prior_stddev ** 2) +
@@ -762,7 +789,8 @@ class SequentialVAE(Network):
         zero, it returns a None tensor, AND, tf.clip_by_value cannot handle None values.... So we use the helper function 
         'clip_grad_if_not_none', to check for if the value is none to get around this problem
 
-        And computes some useful sanity checks to watch in training if we're debugging
+        And computes some useful sanity checks to watch in training if we're debugging, and also adds a lot of 
+        tensorboard scalars for us to use
         """
         optimizer = tf.train.AdamOptimizer(self.learning_rate)
 
@@ -1102,7 +1130,7 @@ class SequentialVAE(Network):
         Inference encodings are computed from the input (x_t-1, the output from the previous step) and we add shortcuts 
         between the ith level of the inference network and the ith level of the generative network 
 
-        We add residual connections over the whole autoencoder
+        We add residual/highway connections over the whole autoencoder (i.e. between two steps in the chain)
 
         The input to the lowest level (i.e. level == self.vlae_levels) is the latent state
 
@@ -1111,13 +1139,18 @@ class SequentialVAE(Network):
 
         For all levels, if input_batch is not null, we add shortcuts. Meaning that we directly add the encoding at the 
         ith layer of the reconition netowork to the ith level of the generator network
+
+        The generator network also needs to predict stddevs for the sample, which should work as follows:
+        if self.add_noise_to_chain == False: stddev = 0
+        if self.add_noise_to_chain == True and self.predict_generator_noise == False: stddev = self.noise_stddevs[step]
+        if self.add_noise_to_chain == True and self.predict_generator_noise == True: stddev predicted from network
     
         :param input_batch: the output from the previous step (none if this is the first step) 
         :param latent: latent variables, sampled from a unit gaussian
         :param step: the current step in the markov chain
         :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
                 versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
-        :return: the output sample(s) from the generative network, and the residual connection ratio
+        :return: the output sample(s) from the generative network, a stddev for the sample, and the residual connection ratio
         """
         # Compute the encodings of the input, z'_t, if we can
         encodings = None
@@ -1165,15 +1198,23 @@ class SequentialVAE(Network):
             output = conv2d_t(cur_sample, self.data_dims[-1], [4,4], 2, activation_fn=tf.sigmoid)
             output = (self.dataset.range[1] - self.dataset.range[0]) * output + self.dataset.range[0]
 
-            # Return output, adding resnet connection over the whole generator network if we can
-            # (encodings[0] = input to inf network)
+            # If we were given encodings, create a highway/residual connection over the whole step in the chain
+            # (encodings[0] = input to the inf network)
+            ratio = None
             if encodings is not None:
                 ratio = conv2d_t(cur_sample, 1, [4,4], 2, activation_fn=tf.sigmoid)
                 ratio = tf.tile(ratio, (1,1,1,self.data_dims[-1]))
                 output = tf.multiply(ratio, output) + tf.multiply(1-ratio, encodings[0])
-                return output, ratio
-            else:
-                return output
+
+            # Now compute the stddevs for the 
+            stddevs = 0
+            if self.add_noise_to_chain:
+                if self.predict_generator_noise:
+                    stddevs = self.stddevs_prediction(output)
+                else:
+                    stddevs = self.noise_stddevs[step]
+
+            return output, stddevs, ratio
 
 
 
@@ -1285,11 +1326,30 @@ class SequentialVAE(Network):
 
 
 
+    def stddevs_prediction(self, output):
+        """
+        Used to make a prediction about the stddevs of a mle sample (the output from a generator network). Suppose the 
+        sample has a shape of (N, W, H, C), where C is channels and N is the batchsize. We should return a tensor of 
+        shape (N,W,H) for the stddevs.
+
+        :param output: the mle sample that we are going to predict the stddevs for. 
+        :return: stddevs, with the same spatial dimensions as output
+        """
+        # (N,W,H,C) -> (N,W,H)
+        stddevs_shape = output.get_shape().as_list()[:-1]
+        stddevs_flat = layers.fully_connected(output, np.prod(stddevs_shape), activation_fn=tf.sigmoid)
+        stddevs = tf.reshape(stddevs, stddevs_shape)
+        return stddevs
+
+
+
+
+
     def generator_flat(self, input_batch, latent, step, reuse=False):
         """
         For the flat test, we use a graphical model of x -> z_0 -> x_0 -> x_1 -> x_2 -> ....
         where x -> z_0 -> x_0 is a VLAE
-        and x_0 -> x_1 -> x_2 -> .... are just "flat convolutions" (don't change the shape of the samples x_i).
+        and x_0 -> x_1 -> x_2 -> .... are j<ust "flat convolutions" (don't change the shape of the samples x_i).
 
         Therefore, when we want to "run the flat test", we want on step 0 to use generator_ladder
         and on all other steps, we just want to have a sequence of flat convolutions.
@@ -1304,13 +1364,20 @@ class SequentialVAE(Network):
 
         The aim is to understand if there is something inherent about encoding to a (small) latent space that 
         causes the MC network constructed from VLAE's perform poorly.
+
+        The generator network also needs to predict stddevs for the sample, which should work as follows:
+        if self.add_noise_to_chain == False: stddev = 0
+        if self.add_noise_to_chain == True and self.predict_generator_noise == False: stddev = self.noise_stddevs[step]
+        if self.add_noise_to_chain == True and self.predict_generator_noise == True: stddev predicted from network
+
+        As generator flat was a test, we haven't bothered to implsement the self.predict_generator_noise == True case 
     
         :param input_batch: the output from the previous step (none if this is the first step) 
         :param latent: latent variables, sampled from a unit gaussian (only used in step 0 for the VLAE step)
         :param step: the current step in the markov chain
         :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
                 versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
-        :return: the output sample(s) from the generative network, and the residual connection ratio
+        :return: the output sample(s) from the generative network, a stddev for that sample, and the residual connection ratio
         """
         if step == 0:
             return self.generator_ladder(input_batch, latent, step, reuse)
@@ -1333,4 +1400,4 @@ class SequentialVAE(Network):
             # Return a 0 to be consistent with the 'resnet connection' return val from the generator_ladder function
             output = conv2d(hidden_layer, self.data_dims[-1], [4,4], 1, activation_fn=tf.sigmoid)
             output = (self.dataset.range[1] - self.dataset.range[0]) * output + self.dataset.range[0]
-            return output, 0
+            return output, self.noise_stddevs[step], 0
