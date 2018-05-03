@@ -1408,7 +1408,7 @@ class SequentialVAE(Network):
         """
         stddevs_shape = output.get_shape().as_list()[1:]
         stddevs_flat = layers.fully_connected(output, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
-        return np.expand_dims(np.reshape(stddevs, stddevs_shape), axis=0)
+        return np.expand_dims(np.reshape(stddevs_flat, stddevs_shape), axis=0)
 
 
 
