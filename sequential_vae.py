@@ -1399,12 +1399,16 @@ class SequentialVAE(Network):
         sample has a shape of (N, W, H, C), where C is channels and N is the batchsize. We should return a tensor of 
         shape (N,W,H) for the stddevs.
 
+        If the input is of shape (N,W,H,C) then we compute a fully connected layer to W*H*C units
+
+        We reshape to the same shape as the input after, and then expand dims to allow for (tf) broadcasting
+
         :param output: the mle sample that we are going to predict the stddevs for. 
         :return: stddevs, with the same spatial dimensions as output
         """
-        stddevs_shape = output.get_shape().as_list()
-        stddevs_flat = layers.fully_connected(output, stddevs_shape, activation_fn=tf.sigmoid)
-        return stddevs
+        stddevs_shape = output.get_shape().as_list()[1:]
+        stddevs_flat = layers.fully_connected(output, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
+        return np.expand_dims(np.reshape(stddevs, stddevs_shape), axis=0)
 
 
 
