@@ -728,9 +728,9 @@ class SequentialVAE(Network):
         """
         if self.predict_generator_noise:
             batch_reconstruction_loss = tf.reduce_mean(tf.log(training_stddevs) + 0.5 * tf.log(2 * np.pi) +
-                                                0.5 * tf.square((training_sample - self.target_placeholder) / training_stddevs))
+                                                0.5 * tf.square((training_mle - self.target_placeholder) / training_stddevs))
         else:
-            batch_reconstruction_loss = tf.reduce_mean(tf.square(training_sample - self.target_placeholder), [1,2,3])
+            batch_reconstruction_loss = tf.reduce_mean(tf.square(training_mle - self.target_placeholder), [1,2,3])
 
         if not self.use_uniform_prior:
             batch_regularization_loss = tf.reduce_mean(-0.5 -tf.log(latent_stddev) +
@@ -751,13 +751,13 @@ class SequentialVAE(Network):
 
         # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
         # to the new objective. Also make it "warm started", because it's a little unstable early on
-        if self.predict_latent_code and prev_training_sample is not None:
+        if self.predict_latent_code and prev_training_mle is not None:
             # probs of latent vars
             normal_distr = tf.contrib.distributions.MultivariateNormalDiag(latent_mean, latent_stddev)
             latent_probs = tf.exp(normal_distr.log_prob(latent_sample))
 
             # Compute squared norm
-            diffs = training_sample - prev_training_sample
+            diffs = training_mle - prev_training_mle
             norms = tf.reduce_sum(diffs ** 2, axis=[1,2,3])
 
             # Weight by the probability to account for potentially bad samples
@@ -777,7 +777,7 @@ class SequentialVAE(Network):
 
         # Finally, prevent gradients from propogating between the different samples, if each encoder/decoder have their own losses
         if self.intermediate_reconstruction:
-            training_sample = tf.stop_gradient(training_sample)
+            training_mle = tf.stop_gradient(training_mle)
 
 
 
