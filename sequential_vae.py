@@ -219,7 +219,59 @@ class SequentialVAE(Network):
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
-        if self.name == "sequential_vae_celebA_inhomog":
+        # one
+        if self.name == "c_homog_imp_max_var_pred":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.predict_latent_code_with_regularization = True
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+
+        # two
+        elif self.name == "c_homog_one_step":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 1
+
+        # three
+        elif self.name == "s_homog_imp_max":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.predict_latent_code_with_regularization = True
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+
+        # four
+        elif self.name == "l_homog_imp_max":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.predict_latent_code_with_regularization = True
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+
+
+        elif self.name == "sequential_vae_celebA_inhomog":
             # nothing
             pass
 
@@ -275,13 +327,6 @@ class SequentialVAE(Network):
             self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
             self.intermediate_reconstruction = False
 
-        # Latent pred not yet refactored back in
-        # elif self.name == "sequential_vae_lsun_pred":
-        #     self.filter_sizes = [self.data_dims[-1], 64, 128, 256, 512, 1024]
-        #     self.vlae_latent_dims = [20, 20, 20, 20]
-        #     self.latent_dim = np.sum(self.ladder_dims)
-        #     self.use_latent_pred = True
-
         elif self.name == "c_inhomog":
             pass
 
@@ -296,26 +341,20 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.early_stopping_mc = True
 
-        # 2' - 31 
-        # TODO
         elif self.name == "c_inhomog_inf_max":
             self.predict_latent_code = True
             self.latent_mean_clip = 8.0
 
-        #2 - 26 | 1' - 33 
-        # TODO
         elif self.name == "c_homog_inf_max_clipped":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.predict_latent_code = True
             self.latent_mean_clip = 8.0
 
-        #4 - 1
         elif self.name == "c_inhomog_inf_max_clipped":
             self.predict_latent_code = True
             self.latent_mean_clip = 8.0
 
-        #3 - 26 
         elif self.name == "c_homog_inf_max_regularized":
             self.share_theta_weights = True
             self.share_phi_weights = True
@@ -336,13 +375,12 @@ class SequentialVAE(Network):
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
 
-        #3' - 21
         elif self.name == "c_homog_infusion_test":
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.generator = self.generator_flat
             self.add_noise_to_chain = True
-        #
+        
         elif self.name == "m_infusion_test":
             self.share_theta_weights = False
             self.share_phi_weights = False
