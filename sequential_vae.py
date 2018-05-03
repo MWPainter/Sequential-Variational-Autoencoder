@@ -515,7 +515,7 @@ class SequentialVAE(Network):
         self.latents = []
         self.training_mles = []
         self.training_samples = []
-        self.training_mles = []
+        self.generative_mles = []
         self.generative_samples = []
 
         self.loss = 0.0
