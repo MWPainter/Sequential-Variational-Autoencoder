@@ -223,7 +223,7 @@ class SequentialVAE(Network):
         if self.name == "c_homog_imp_max_var_pred":
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.mc_steps = 8
