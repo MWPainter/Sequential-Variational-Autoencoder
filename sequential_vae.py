@@ -1344,9 +1344,6 @@ class SequentialVAE(Network):
 
         # project them into the correct image sizes to be added/concatenated to the appropriate intermediate representations
         for i in range(self.vlae_levels-1):
-
-
-
             ladder_step_size = self.image_sizes[i+1] * self.image_sizes[i+1] * self.filter_sizes[i+1]
             ladder[i] = fc_bn_lrelu(ladder[i], ladder_step_size)
             ladder[i] = tf.reshape(ladder[i], [-1, self.image_sizes[i+1], self.image_sizes[i+1], self.filter_sizes[i+1]])
@@ -1410,7 +1407,9 @@ class SequentialVAE(Network):
         output_flat = tf.reshape(output, [-1, int(np.prod(stddevs_shape))])
         stddevs_flat = layers.fully_connected(output_flat, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
         print(stddevs_flat.get_shape().as_list())
-        return np.reshape(stddevs_flat, [-1] + stddevs_shape)
+        stddevs_shape = [-1] + stddevs_shape
+        print(stddevs_shape)
+        return np.reshape(stddevs_flat, stddevs_shape)
 
 
 
