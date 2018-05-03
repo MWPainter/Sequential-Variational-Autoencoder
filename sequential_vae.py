@@ -870,7 +870,7 @@ class SequentialVAE(Network):
             pred_latent_train_op = optimizer.apply_gradients(grads)
 
             if self.add_debug_tb_variables:
-                phi_latent_pred_grads_norm = tf.global_norm(zip(*grads)[0])
+                phi_latent_pred_grads_norm = tf.global_norm(list(zip(*grads))[0])
                 phi_latent_pred_update_ratio = self.learning_rate * phi_latent_pred_grads_norm / phi_weights_norm
 
                 tf.summary.scalar("phi_latent_pred_grads_norm", phi_latent_pred_grads_norm)
