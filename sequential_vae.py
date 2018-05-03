@@ -1402,11 +1402,9 @@ class SequentialVAE(Network):
         :param output: the mle sample that we are going to predict the stddevs for. 
         :return: stddevs, with the same spatial dimensions as output
         """
-        # (N,W,H,C) -> (N,W,H)
-        stddevs_shape = output.get_shape().as_list()[:-1]
-        stddevs_flat = layers.fully_connected(output, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
-        stddevs = tf.reshape(stddevs_flat, stddevs_shape)
-        return tf.expand_dims(stddevs, 2)
+        stddevs_shape = output.get_shape().as_list()
+        stddevs_flat = layers.fully_connected(output, stddevs_shape, activation_fn=tf.sigmoid)
+        return stddevs
 
 
 
