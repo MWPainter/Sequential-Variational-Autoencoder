@@ -253,8 +253,6 @@ class SequentialVAE(Network):
             self.predict_latent_code = True
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
-            self.add_noise_to_chain = True
-            self.predict_generator_noise = True
 
         # four
         elif self.name == "l_homog_imp_max":
@@ -267,8 +265,6 @@ class SequentialVAE(Network):
             self.predict_latent_code = True
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
-            self.add_noise_to_chain = True
-            self.predict_generator_noise = True
 
 
         elif self.name == "sequential_vae_celebA_inhomog":
