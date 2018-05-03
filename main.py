@@ -39,6 +39,7 @@ from sequential_vae import SequentialVAE
 from trainer import NoisyTrainer
 
 if args.gpus is not '':
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpus
 
 # Set the network name if there wasn't any passed in
