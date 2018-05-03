@@ -894,14 +894,15 @@ class SequentialVAE(Network):
 
     def test(self, input_batch):
         """
-        Runs the network, in training mode, on the test set. Used to test how we are doing.
+        Runs the network, in training mode, on the test set. Used to test how we are doing. (Returns the mle output from 
+        the final network)
 
         :param input_batch: The input to the network, noise that we want to turn into nice images
         :return: The final output of the SeqVAE network, i.e. the generated image
         """
         feed_dict = {self.input_placeholder: input_batch}
-        generated_image = self.sess.run(self.training_samples[-1], feed_dict=feed_dict)
-        return generated_image
+        generated_mle, generated_image = self.sess.run([self.training_mles[-1], self.training_samples[-1]], feed_dict=feed_dict)
+        return generated_mle
 
 
 
@@ -912,6 +913,9 @@ class SequentialVAE(Network):
         Run the network in a generative mede. Generate sample from a normal distribution and feed 
         them into the network (as the latent variables). To run the generative part(s) of the network
         we run the self.generative_samples tf ops.
+
+        If we are sampling the x_t from a normal distribution properly, then we should also return the means/MLEs that 
+        we used for sampling
 
         N.B. This isn't used for optimization, just for visualization.
 
@@ -927,7 +931,11 @@ class SequentialVAE(Network):
         for i in range(self.mc_steps):
             feed_dict[self.latents[i]] = np.random.normal(size=(batch_size, self.latent_dim))
 
-        output = self.sess.run(self.generative_samples, feed_dict=feed_dict)
+        if self.add_noise_to_chain:
+            output = self.sess.run(self.generative_mles + self.generative_samples, feed_dict=feed_dict)
+        else:
+            output = self.sess.run(self.generative_samples, feed_dict=feed_dict)
+
         return output
 
 
@@ -939,6 +947,9 @@ class SequentialVAE(Network):
         Run the network to generate samples in the training mode. To run the training part(s) 
         of the network we run the self.training_samples tf ops.
 
+        If we are sampling the x_t from a normal distribution properly, then we should also return the means/MLEs that 
+        we used for sampling
+
         N.B. This isn't used for optimization, just for visualization.
 
         :param input_batch: the input to the network (samples from the training set)
@@ -946,7 +957,12 @@ class SequentialVAE(Network):
         """
         feed_dict = dict()
         feed_dict[self.input_placeholder] = input_batch
-        output = self.sess.run(self.training_samples, feed_dict=feed_dict)
+
+        if self.add_noise_to_chain:
+            output = self.sess.run(self.training_mles + self.training_samples, feed_dict=feed_dict)
+        else:
+            output = self.sess.run(self.training_samples, feed_dict=feed_dict)
+
         return output
 
 
@@ -972,10 +988,25 @@ class SequentialVAE(Network):
                 bx = self.dataset.next_batch(batch_size)
                 z = self.training_mc_samples(bx)
                 z = [bx] + z
-            v = np.zeros([z[0].shape[0] * self.data_dims[0], len(z) * self.data_dims[1], self.data_dims[2]])
+
+            if self.add_noise_to_chain:
+                # z[0].shape[0] = batch size
+                chain_len = (len(z) + 1) / 2
+                v = np.zeros([z[0].shape[0] * self.data_dims[0] * 2, chain_len * self.data_dims[1], self.data_dims[2]])
+            else:
+                v = np.zeros([z[0].shape[0] * self.data_dims[0], len(z) * self.data_dims[1], self.data_dims[2]])
+
             for b in range(0, z[0].shape[0]):
                 for t in range(0, len(z)):
-                    v[b*self.data_dims[0]:(b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] = \
+                    if self.add_noise_to_chain and t < chain_len:
+                        v[2*b*self.data_dims[0]:(2*b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] = \
+                                                                                        self.dataset.display(z[t][b])
+                    elif self.add_noise_to_chain: # and t >= chain_len:
+                        u = t - chain_len + 1
+                        v[(2*b+1)*self.data_dims[0]:(2*b+2)*self.data_dims[0], u*self.data_dims[1]:(u+1)*self.data_dims[1]] = \
+                                                                                        self.dataset.display(z[t][b])
+                    else:
+                        v[b*self.data_dims[0]:(b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] = \
                                                                                         self.dataset.display(z[t][b])
 
             if use_gui is True:
