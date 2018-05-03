@@ -252,7 +252,7 @@ class SequentialVAE(Network):
             self.mc_steps = 8
             self.predict_latent_code = True
             self.latent_mean_clip = 32.0
-            self.predict_latent_code_with_regularization = True
+            self.predict_latent_code_with_regularization = True_
 
         # four
         elif self.name == "l_homog_imp_max":
@@ -522,7 +522,9 @@ class SequentialVAE(Network):
         self.pred_latent_loss = 0.0
         self.final_loss = None
 
+        training_mle = None
         training_sample = None
+        generative_mle = None
         generative_sample = None
 
         for step in range(self.mc_steps):
