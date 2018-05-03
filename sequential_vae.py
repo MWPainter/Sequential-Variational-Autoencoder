@@ -884,7 +884,7 @@ class SequentialVAE(Network):
 
     def log_tf_variables(self):
         """
-        Log all tensorflow variables, useful for debugging sometimes!
+        Log all tensorflow variables, useful for debugigng sometimes!
         """
         self.LOG.debug("Printing out all variable names constructed (for debugging).")
         tf_vars = tf.trainable_variables()
@@ -1027,7 +1027,7 @@ class SequentialVAE(Network):
 
             if self.add_noise_to_chain:
                 # z[0].shape[0] = batch size
-                chain_len = (len(z) + 1) / 2
+                chain_len = (len(z) + 1) // 2
                 v = np.zeros([z[0].shape[0] * self.data_dims[0] * 2, chain_len * self.data_dims[1], self.data_dims[2]])
             else:
                 v = np.zeros([z[0].shape[0] * self.data_dims[0], len(z) * self.data_dims[1], self.data_dims[2]])
