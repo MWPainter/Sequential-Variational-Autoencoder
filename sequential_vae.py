@@ -267,6 +267,24 @@ class SequentialVAE(Network):
             self.predict_latent_code_with_regularization = True
 
 
+        # five
+        if self.name == "m_homog_imp_max_var_pred":
+            self.vlae_levels = 3
+            self.vlae_latent_dims = [2, 2, 2]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 6
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.predict_latent_code_with_regularization = True
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+
+
         elif self.name == "sequential_vae_celebA_inhomog":
             # nothing
             pass
