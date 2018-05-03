@@ -650,11 +650,11 @@ class SequentialVAE(Network):
         :return generative_sample: the next generative sample (for when running int generative mode)
         """
         if step == 0:
-            training_mle, training_stddev, _ = self.generator(None, latent_train, step)
-            generative_mle, generative_stddev, _ = self.generator(None, latent_gen, step, reuse=True)
+            training_mle, training_stddevs, _ = self.generator(None, latent_train, step)
+            generative_mle, generative_stddevs, _ = self.generator(None, latent_gen, step, reuse=True)
         else:
-            training_mle, training_stddev, resnet_ratios = self.generator(last_training_sample, latent_train, step)
-            generative_mle, generative_stddev, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
+            training_mle, training_stddevs, resnet_ratios = self.generator(last_training_sample, latent_train, step)
+            generative_mle, generative_stddevs, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
             if self.add_debug_tb_variables and step is not None:
                 tf.summary.scalar("resnet_gate_weight_step_%d" % step, tf.reduce_mean(resnet_ratios))
 
@@ -671,8 +671,8 @@ class SequentialVAE(Network):
 
         # Add any noise indicated by the generator network
         image_batch_shape = tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims)
-        training_sample = training_mle + training_stddev * tf.random_normal(image_batch_shape)
-        generative_sample = generative_mle + generative_stddev * tf.random_normal(image_batch_shape)
+        training_sample = training_mle + training_stddevs * tf.random_normal(image_batch_shape)
+        generative_sample = generative_mle + generative_stddevs * tf.random_normal(image_batch_shape)
 
         return training_mle, training_stddevs, training_sample, generative_mle, generative_sample
 
