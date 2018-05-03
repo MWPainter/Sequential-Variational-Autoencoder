@@ -545,7 +545,7 @@ class SequentialVAE(Network):
 
             # Make recognition, p_phi(z_t|x), and generative, p_theta(x_t|z_t,x_t-1), networks. Append samples from them
             # latent_train = the latent variable in training mode, latent_generative = in generative mode
-            latent_mean, latent_stddev, latent_train, latent_generative = self.create_recognition_network(step=step)
+            latent_mean, latent_stddevs, latent_train, latent_generative = self.create_recognition_network(step=step)
             generator_network_output = self.create_generator_network(prev_training_sample, prev_generative_sample, 
                                                                                 latent_train, latent_generative, step)
             training_mle, training_stddevs, training_sample, generative_mle, generative_sample = generator_network_output
@@ -560,11 +560,11 @@ class SequentialVAE(Network):
                 tf.summary.scalar("training_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(training_stddevs)))
                 tf.summary.scalar("latent_mean_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_mean)))
                 tf.summary.scalar("latent_mean_avg_step_%d" % step, tf.reduce_mean(latent_mean))
-                tf.summary.scalar("latent_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_stddev)))
-                tf.summary.scalar("latent_stddev_avg_step_%d" % step, tf.reduce_mean(latent_stddev))
+                tf.summary.scalar("latent_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_stddevs)))
+                tf.summary.scalar("latent_stddev_avg_step_%d" % step, tf.reduce_mean(latent_stddevs))
 
             # Compute and accumulate losses
-            self.compute_and_accumulate_loss(prev_training_mle, training_mle, training_stddevs, latent_train, latent_mean, latent_stddev, step)
+            self.compute_and_accumulate_loss(prev_training_mle, training_mle, training_stddevs, latent_train, latent_mean, latent_stddevs, step)
 
         # Add tensorboard summary for the loss
         tf.summary.scalar("loss", self.loss)
@@ -1405,7 +1405,7 @@ class SequentialVAE(Network):
         # (N,W,H,C) -> (N,W,H)
         stddevs_shape = output.get_shape().as_list()[1:-1]
         stddevs_flat = layers.fully_connected(output, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
-        stddevs = tf.reshape(stddevs, stddevs_shape)
+        stddevs = tf.reshape(stddevs_flat, stddevs_shape)
         return stddevs
 
 
