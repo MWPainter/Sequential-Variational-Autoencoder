@@ -252,7 +252,7 @@ class SequentialVAE(Network):
             self.mc_steps = 8
             self.predict_latent_code = True
             self.latent_mean_clip = 32.0
-            self.predict_latent_code_with_regularization = True_
+            self.predict_latent_code_with_regularization = True
 
         # four
         elif self.name == "l_homog_imp_max":
@@ -1034,11 +1034,12 @@ class SequentialVAE(Network):
 
             for b in range(0, z[0].shape[0]):
                 for t in range(0, len(z)):
-                    if self.add_noise_to_chain and t < chain_len:
-                        v[2*b*self.data_dims[0]:(2*b+1)*self.data_dims[0], t*self.data_dims[1]:(t+1)*self.data_dims[1]] = \
+                    tc = t + i
+                    if self.add_noise_to_chain and tc < chain_len:
+                        v[2*b*self.data_dims[0]:(2*b+1)*self.data_dims[0], tc*self.data_dims[1]:(tc+1)*self.data_dims[1]] = \
                                                                                         self.dataset.display(z[t][b])
                     elif self.add_noise_to_chain: # and t >= chain_len:
-                        u = t - chain_len + 1
+                        u = tc - chain_len + (1 - i)
                         v[(2*b+1)*self.data_dims[0]:(2*b+2)*self.data_dims[0], u*self.data_dims[1]:(u+1)*self.data_dims[1]] = \
                                                                                         self.dataset.display(z[t][b])
                     else:
