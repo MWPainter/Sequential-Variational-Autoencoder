@@ -1048,14 +1048,14 @@ class SequentialVAE(Network):
 
             if self.add_noise_to_chain:
                 # z[0].shape[0] = batch size
-                chain_len = (len(z) + 1) // 2
+                chain_len = (len(z)+1) // 2
                 v = np.zeros([z[0].shape[0] * self.data_dims[0] * 2, chain_len * self.data_dims[1], self.data_dims[2]])
             else:
                 v = np.zeros([z[0].shape[0] * self.data_dims[0], len(z) * self.data_dims[1], self.data_dims[2]])
 
             for b in range(0, z[0].shape[0]):
                 for t in range(0, len(z)):
-                    tc = t + (1-1)
+                    tc = t + (1-i)
                     if self.add_noise_to_chain and tc < chain_len:
                         v[2*b*self.data_dims[0]:(2*b+1)*self.data_dims[0], tc*self.data_dims[1]:(tc+1)*self.data_dims[1]] = \
                                                                                         self.dataset.display(z[t][b])
