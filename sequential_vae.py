@@ -659,6 +659,9 @@ class SequentialVAE(Network):
         If 'self.add_noise_to_chain' is false, then self.generator should return the correct value from 
         self.noise_stddevs, to use a fixed noise with that 
 
+        We also multiply the noise_stddevs by self.reg_coeff, so that noise is slowly learned, as we can think of the 
+        noise as regularization, and it can also make training early on unstable
+
         :param last_training_sample: The last training sample, x_t, when run in training mode
         :param last_generative_sample: The last generative sample, x_t, when run in generative mode
         :param latent_train: The latent variable, z''_t, when run in training mode
@@ -689,8 +692,8 @@ class SequentialVAE(Network):
 
         # Add any noise indicated by the generator network
         image_batch_shape = tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims)
-        training_sample = training_mle + training_stddevs * tf.random_normal(image_batch_shape)
-        generative_sample = generative_mle + generative_stddevs * tf.random_normal(image_batch_shape)
+        training_sample = training_mle + self.reg_coeff  * training_stddevs * tf.random_normal(image_batch_shape)
+        generative_sample = generative_mle + self.reg_coeff * generative_stddevs * tf.random_normal(image_batch_shape)
 
         return training_mle, training_stddevs, training_sample, generative_mle, generative_sample
 
@@ -1052,12 +1055,12 @@ class SequentialVAE(Network):
 
             for b in range(0, z[0].shape[0]):
                 for t in range(0, len(z)):
-                    tc = t + i
+                    tc = t + (1-1)
                     if self.add_noise_to_chain and tc < chain_len:
                         v[2*b*self.data_dims[0]:(2*b+1)*self.data_dims[0], tc*self.data_dims[1]:(tc+1)*self.data_dims[1]] = \
                                                                                         self.dataset.display(z[t][b])
                     elif self.add_noise_to_chain: # and t >= chain_len:
-                        u = tc - chain_len + (1 - i)
+                        u = tc - chain_len + i
                         v[(2*b+1)*self.data_dims[0]:(2*b+2)*self.data_dims[0], u*self.data_dims[1]:(u+1)*self.data_dims[1]] = \
                                                                                         self.dataset.display(z[t][b])
                     else:
