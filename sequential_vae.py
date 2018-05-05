@@ -277,7 +277,7 @@ class SequentialVAE(Network):
             self.predict_latent_code_with_regularization = True
 
         # six
-        if self.name == "c_homog_imp_max":
+        elif self.name == "c_homog_imp_max":
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -290,7 +290,7 @@ class SequentialVAE(Network):
 
 
         # five + seven
-        if self.name == "m_homog_imp_max_var_pred":
+        elif self.name == "m_homog_imp_max_var_pred":
             self.vlae_levels = 3
             self.vlae_latent_dims = [8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
@@ -308,7 +308,7 @@ class SequentialVAE(Network):
 
 
         # 8
-        if self.name == "m_homog_one_step":
+        elif self.name == "m_homog_one_step":
             self.vlae_levels = 4
             self.vlae_latent_dims = [8, 8, 8, 8]
             self.latent_dim = np.sum(self.vlae_latent_dims)
@@ -1221,7 +1221,7 @@ class SequentialVAE(Network):
             # the generative network will not work
             if len(image_sizes) != len(self.image_sizes):
                 self.LOG.error("self.image_sizes is of length %d, but, image_sizes actually of length %d. " +
-                    "(need len(self.image_sizes) == self.vlae_levels+1" % (len(image_sizes, len(self.image_sizes))))
+                    "(need len(self.image_sizes) == self.vlae_levels+1" % (len(image_sizes), len(self.image_sizes)))
                 exit(-1)
 
             for i in range(len(image_sizes)):
