@@ -206,8 +206,8 @@ class SequentialVAE(Network):
         self.add_noise_to_chain = False
         self.predict_generator_noise = False
         self.predict_generator_stddev_max = 0.25
-        self.predict_generator_stddev_conv_layers = 2
-        self.predict_generator_stddev_filter_sizes  = [8, 8]
+        self.predict_generator_stddev_conv_layers = 5 # with 5x5 convs, this gives a receptive field of 1+4*5 = 21
+        self.predict_generator_stddev_filter_sizes  = [5, 5, 5, 5, 5]
         self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
         self.combine_noise_method = "concat"
 
