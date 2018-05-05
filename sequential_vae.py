@@ -102,6 +102,8 @@ class SequentialVAE(Network):
         self.share_phi_weights = indicates any networks which include weights as part of 'phi', should share 
                     parameters/weights. (I.e. if this is true, q_phi should always be the same at every MC timestep). 
                     We could also think of this as making the 'phi' pars for the sequential vae be time homogeneous
+        self.inference_first_step = the inference network to use on the first step (see self.inference too)
+        self.generator_first_step = the generator network to use on the first step (see self.inference too)
         self.inference = the recognition network to use (currently just VLAE's recognition network is an option)
                     N.B. self.inference is a functional value
         self.generator = the generator network to use (currently just VLAE's generator is an option)
@@ -126,6 +128,9 @@ class SequentialVAE(Network):
                     distribution). Outputting the mean is correct in a regular vae (as the Max Likelihood estimate), 
                     however, when used in a chain, we should actually sample the variable).
         self.predict_generator_noise = should we predeict the stddev of the Gaussian output by a generator network
+        self.predict_generator_stddev_max = max output from predicting the stddev of the noise 
+        self.predict_generator_stddev_conv_layers = number of conv layers in stddev prediction
+        self.predict_generator_stddev_filter_sizes = number of filters for each conv layer in the stddev prediction network 
         self.noise_stddevs = an array which must be exactly of lenght 'self.mc_steps', defining the std_dev for the 
                     Gaussian noise added at each step, if 'self.add_noise_to_chain' is true. (We still want to output 
                     the MLE estimate from the whole chain, so we should set self.noise_stddevs[-1] == 0.0).
@@ -184,6 +189,8 @@ class SequentialVAE(Network):
         # SeqVAE parameters 
         self.share_theta_weights = False
         self.share_phi_weights = False
+        self.inference_first_step = self.inference_ladder 
+        self.generator_first_step = self.generator_ladder 
         self.inference = self.inference_ladder 
         self.generator = self.generator_ladder 
         self.mc_steps = 8
@@ -198,6 +205,9 @@ class SequentialVAE(Network):
         self.use_uniform_prior = False 
         self.add_noise_to_chain = False
         self.predict_generator_noise = False
+        self.predict_generator_stddev_max = 0.25
+        self.predict_generator_stddev_conv_layers = 2
+        self.predict_generator_stddev_filter_sizes  = [8, 8]
         self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
         self.combine_noise_method = "concat"
 
@@ -578,7 +588,6 @@ class SequentialVAE(Network):
                 tf.summary.scalar("training_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(training_stddevs)))
                 tf.summary.scalar("latent_mean_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_mean)))
                 tf.summary.scalar("latent_mean_avg_step_%d" % step, tf.reduce_mean(latent_mean))
-                tf.summary.scalar("latent_stddev_avg_magnitude_step_%d" % step, tf.reduce_mean(tf.abs(latent_stddevs)))
                 tf.summary.scalar("latent_stddev_avg_step_%d" % step, tf.reduce_mean(latent_stddevs))
 
             # Compute and accumulate losses
@@ -620,8 +629,11 @@ class SequentialVAE(Network):
         """
         latent_shape = tf.stack([tf.shape(self.input_placeholder)[0], self.latent_dim])
 
-        if self.predict_latent_code and step != 0:
-            latent_mean, latent_stddev = self.inference(self.training_samples[step-1], step)
+        if self.predict_latent_code:
+            if step != 0:
+                latent_mean, latent_stddev = self.inference(self.training_samples[step-1], step)
+            else:
+                latent_mean, latent_stddev = self.inference_first_step(self.input_placeholder, step)
             latent_sample = latent_mean + tf.multiply(latent_stddev, tf.random_normal(latent_shape))
             latent_train = latent_sample
             latent_generative = latent_sample
@@ -671,8 +683,8 @@ class SequentialVAE(Network):
         :return generative_sample: the next generative sample (for when running int generative mode)
         """
         if step == 0:
-            training_mle, training_stddevs, _ = self.generator(None, latent_train, step)
-            generative_mle, generative_stddevs, _ = self.generator(None, latent_gen, step, reuse=True)
+            training_mle, training_stddevs, _ = self.generator_first_step(None, latent_train, step)
+            generative_mle, generative_stddevs, _ = self.generator_first_step(None, latent_gen, step, reuse=True)
         else:
             training_mle, training_stddevs, resnet_ratios = self.generator(last_training_sample, latent_train, step)
             generative_mle, generative_stddevs, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
@@ -1425,10 +1437,15 @@ class SequentialVAE(Network):
         :param output: the mle sample that we are going to predict the stddevs for. 
         :return: stddevs, with the same spatial dimensions as output
         """
-        stddevs_shape = output.get_shape().as_list()[1:]
-        output_flat = tf.reshape(output, [-1, int(np.prod(stddevs_shape))])
-        stddevs_flat = layers.fully_connected(output_flat, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
-        return tf.reshape(stddevs_flat, [-1] + stddevs_shape)
+        stddevs_pred = output
+        for i in range(self.predict_generator_stddev_conv_layers):
+            stddevs_pred = conv2d_bn_lrelu(stddevs_pred, self.predict_generator_stddev_filter_sizes[i], [4,4], 1)
+        stddevs_pred = conv2d(stddevs_pred, num_outputs=1, kernel_size=[1,1], stride=1, activation_fn=tf.sigmoid)
+        #stddevs_shape = stddev_pred.get_shape().as_list()[1:]
+        #stddevs_pred_flat = tf.reshape(stddevs_pred, [-1, int(np.prod(stddevs_shape))])
+        #stddevs_pred_flat = layers.fully_connected(stddevs_pred_flat, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
+        #stddevs_pred = tf.reshape(stddevs_pred_flat, [-1] + stddevs_shape)
+        return stddevs_pred * self.predict_generator_stddev_max
 
 
 
