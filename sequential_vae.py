@@ -229,7 +229,7 @@ class SequentialVAE(Network):
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
-        # one
+        # one + five
         if self.name == "c_homog_imp_max_var_pred":
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
@@ -276,8 +276,20 @@ class SequentialVAE(Network):
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
 
+        # six
+        if self.name == "c_homog_imp_max":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.predict_latent_code_with_regularization = True
 
-        # five
+
+        # five + seven
         if self.name == "m_homog_imp_max_var_pred":
             self.vlae_levels = 3
             self.vlae_latent_dims = [8, 8, 8]
@@ -293,6 +305,7 @@ class SequentialVAE(Network):
             self.predict_latent_code_with_regularization = True
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
+
 
 
         elif self.name == "sequential_vae_celebA_inhomog":
