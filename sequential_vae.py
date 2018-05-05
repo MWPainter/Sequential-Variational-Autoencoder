@@ -307,6 +307,18 @@ class SequentialVAE(Network):
             self.predict_generator_noise = True
 
 
+        # 8
+        if self.name == "m_homog_one_step":
+            self.vlae_levels = 4
+            self.vlae_latent_dims = [8, 8, 8, 8]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 1
+
+
 
         elif self.name == "sequential_vae_celebA_inhomog":
             # nothing
