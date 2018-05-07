@@ -270,6 +270,7 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 8
             self.predict_latent_code = True
+            self.regularized_steps = [0]
             self.latent_mean_clip = 32.0
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
@@ -282,6 +283,7 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 8
             self.predict_latent_code = True
+            self.regularized_steps = [0]
             self.latent_mean_clip = 32.0
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
