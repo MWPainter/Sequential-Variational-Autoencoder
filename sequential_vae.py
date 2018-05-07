@@ -631,7 +631,7 @@ class SequentialVAE(Network):
         self.generative_samples = []
 
         self.loss = 0.0
-        self.pred_latent_loss = 0.0
+        self.improvement_maximization_loss = 0.0
         self.final_loss = None
 
         training_mle = None
@@ -888,8 +888,8 @@ class SequentialVAE(Network):
 
             # set loss to be negative, so we maximize
             latent_loss = self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
-            self.pred_latent_loss += latent_loss
-            tf.summary.scalar("pred_latent_loss_step_%d" % step, latent_loss)
+            self.improvement_maximization_loss += latent_loss
+            tf.summary.scalar("improvement_maximization_loss_step_%d" % step, latent_loss)
 
         # Keep track of the final reconstruction error (we just set this each time) 
         self.final_loss = tf.reduce_mean(reconstruction_loss)
@@ -983,11 +983,11 @@ class SequentialVAE(Network):
             tf.summary.scalar("phi_elbo_update_ratio", phi_elbo_update_ratio)
 
 
-        if not self.predict_latent_code:
+        if not self.add_improvement_maximization_loss:
             self.train_op = elbo_train_op
 
         else:
-            grads = optimizer.compute_gradients(self.pred_latent_loss, var_list=phi_vars)
+            grads = optimizer.compute_gradients(self.improvement_maximization_loss, var_list=phi_vars)
             if self.clip_grads:
                 grads = [(clip_grad_if_not_none(grad, self.clip_grad_value), var) for grad, var in grads]
             pred_latent_train_op = optimizer.apply_gradients(grads)
