@@ -846,7 +846,7 @@ class SequentialVAE(Network):
         if self.predict_generator_noise:
             tf.summary.scalar("classic_reconstruction_loss_step_%d" % step, tf.reduce_mean(batch_reconstruction_loss))
             batch_reconstruction_loss = tf.reduce_mean(tf.log(training_stddevs) + 0.5 * tf.log(2 * np.pi) +
-                                                0.5 * tf.square((training_mle - self.target_placeholder) / training_stddevs)):
+                                                0.5 * tf.square((training_mle - self.target_placeholder) / training_stddevs))
 
         # add regularization loss (if we should)
         batch_regularization_loss = 0
