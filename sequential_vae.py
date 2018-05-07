@@ -116,9 +116,12 @@ class SequentialVAE(Network):
                     successive samples don't make enough improvement
         self.early_stopping_threshold = threshold on the L2 distance of successive samples for which we stop the chain,
                     note that we only stop early if 'self.early_stopping_mc' is true
+
+        self.regularized_steps = the steps for which we should actually add a regulaizat
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
                     homogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
                     (in BOTH gnerative and training samples).
+        self.add_improvement_maximization_loss = if we should actually add the loss for the latent info max
         self.latent_mean_clip = a value to clip (per dimension) the latent mean predictions, set to inf by default to 
                     not provide any clipping
         self.latent_prior_stddev = the stddev on the prior that we use for the latent space (set to 1.0 for default)
@@ -198,14 +201,16 @@ class SequentialVAE(Network):
         self.intermediate_reconstruction = True
         self.early_stopping_mc = False
         self.early_stopping_threshold = 0.0000000001
+        self.regularized_steps = range(self.mc_steps)
         self.predict_latent_code = False
+        self.add_improvement_maximization_loss = False
         self.latent_mean_clip = np.inf
         self.predict_latent_code_with_regularization = False    # TEMPORARY VARIABLE FOR SOME TESTS
         self.latent_prior_stddev = 1.0
         self.use_uniform_prior = False 
         self.add_noise_to_chain = False
         self.predict_generator_noise = False
-        self.predict_generator_stddev_max = 0.25
+        self.predict_generator_stddev_max = 0.6
         self.predict_generator_stddev_conv_layers = 5 # with 5x5 convs, this gives a receptive field of 1+4*5 = 21
         self.predict_generator_stddev_filter_sizes  = [5, 5, 5, 5, 5]
         self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
@@ -238,13 +243,61 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 8
             self.predict_latent_code = True
+            self.add_improvement_maximization_loss = True
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
 
+        elif self.name == "c_homog_no_reg_pred_latent":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.latent_mean_clip = 32.0
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+
+        elif self.name == "c_homog_no_reg_pred_latent_var_pred":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+
+        elif self.name == "c_homog_no_reg_pred_latent_var_pred_more_noise":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+            self.predict_generator_stddev_max = 1.0
+
+
         # two
         elif self.name == "c_homog_one_step":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 1
+
+        elif self.name == "s_homog_one_step":
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
@@ -261,6 +314,7 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 8
             self.predict_latent_code = True
+            self.add_improvement_maximization_loss = True
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
 
@@ -273,6 +327,7 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 8
             self.predict_latent_code = True
+            self.add_improvement_maximization_loss = True
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
 
@@ -285,6 +340,7 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 8
             self.predict_latent_code = True
+            self.add_improvement_maximization_loss = True
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
 
@@ -301,13 +357,14 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 6
             self.predict_latent_code = True
+            self.add_improvement_maximization_loss = True
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
 
 
-        # 8
+        # eight
         elif self.name == "m_homog_one_step":
             self.vlae_levels = 4
             self.vlae_latent_dims = [8, 8, 8, 8]
@@ -784,18 +841,24 @@ class SequentialVAE(Network):
         :param step: the time step with respect to the MC
         :return: None
         """
+        # reconstruction loss, add a tensorboard summary for the normal reconstruction loss when we're adding sigma predictions into the mix (to be able to compare multiple)
+        batch_reconstruction_loss = tf.reduce_mean(tf.square(training_mle - self.target_placeholder), [1,2,3])
         if self.predict_generator_noise:
+            tf.summary.scalar("classic_reconstruction_loss_step_%d" % step, tf.reduce_mean(batch_reconstruction_loss))
             batch_reconstruction_loss = tf.reduce_mean(tf.log(training_stddevs) + 0.5 * tf.log(2 * np.pi) +
-                                                0.5 * tf.square((training_mle - self.target_placeholder) / training_stddevs))
-        else:
-            batch_reconstruction_loss = tf.reduce_mean(tf.square(training_mle - self.target_placeholder), [1,2,3])
+                                                0.5 * tf.square((training_mle - self.target_placeholder) / training_stddevs)):
 
-        if not self.use_uniform_prior:
-            batch_regularization_loss = tf.reduce_mean(-0.5 -tf.log(latent_stddev) +
-                                                0.5 * tf.square(latent_stddev) / (self.latent_prior_stddev ** 2) +
-                                                0.5 * tf.square(latent_mean) / (self.latent_prior_stddev ** 2), 1) 
-        else:
-            batch_regularization_loss = tf.reduce_mean(-tf.log(latent_stddev))
+        # add regularization loss (if we should)
+        batch_regularization_loss = 0
+        if step in self.regularized_steps:
+            if not self.use_uniform_prior:
+                batch_regularization_loss = tf.reduce_mean(-0.5 -tf.log(latent_stddev) +
+                                                    0.5 * tf.square(latent_stddev) / (self.latent_prior_stddev ** 2) +
+                                                    0.5 * tf.square(latent_mean) / (self.latent_prior_stddev ** 2), 1) 
+            else:
+                batch_regularization_loss = tf.reduce_mean(-tf.log(latent_stddev))
+
+        # aggregate over batch - TODO: remove this... it's pointless, just take the mean properly above...
         reconstruction_loss = tf.reduce_mean(batch_reconstruction_loss)
         regularization_loss = tf.reduce_mean(batch_regularization_loss)
 
@@ -809,7 +872,7 @@ class SequentialVAE(Network):
 
         # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
         # to the new objective. Also make it "warm started", because it's a little unstable early on
-        if self.predict_latent_code and prev_training_mle is not None:
+        if self.add_improvement_maximization_loss and prev_training_mle is not None:
             # probs of latent vars
             normal_distr = tf.contrib.distributions.MultivariateNormalDiag(latent_mean, latent_stddev)
             latent_probs = tf.exp(normal_distr.log_prob(latent_sample))
