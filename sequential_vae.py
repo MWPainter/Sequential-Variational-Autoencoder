@@ -259,8 +259,6 @@ class SequentialVAE(Network):
             self.predict_latent_code = True
             self.regularized_steps = [0]
             self.latent_mean_clip = 32.0
-            self.add_noise_to_chain = True
-            self.predict_generator_noise = True
 
         elif self.name == "c_homog_no_reg_pred_latent_var_pred":
             self.vlae_latent_dims = [12, 12, 12, 12]
