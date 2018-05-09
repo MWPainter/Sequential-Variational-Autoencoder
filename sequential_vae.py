@@ -386,6 +386,18 @@ class SequentialVAE(Network):
             self.latent_mean_clip = 32.0
             self.predict_latent_code_with_regularization = True
 
+        elif self.name == "c_homog_no_reg_imp_max":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.add_improvement_maximization_loss = True
+            self.latent_mean_clip = 32.0
+            self.predict_latent_code_with_regularization = True
 
 
 
