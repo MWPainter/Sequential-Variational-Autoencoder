@@ -397,7 +397,6 @@ class SequentialVAE(Network):
             self.regularized_steps = [0]
             self.add_improvement_maximization_loss = True
             self.latent_mean_clip = 32.0
-            self.predict_latent_code_with_regularization = True
 
 
 
