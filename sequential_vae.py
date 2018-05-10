@@ -121,6 +121,8 @@ class SequentialVAE(Network):
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
                     homogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
                     (in BOTH gnerative and training samples).
+        self.first_step_loss_coeff = the weighting on the first step of the chain (the math suggests this should 
+                    be 2.0, and not 1, surprisingly)
         self.add_improvement_maximization_loss = if we should actually add the loss for the latent info max
         self.latent_mean_clip = a value to clip (per dimension) the latent mean predictions, set to inf by default to 
                     not provide any clipping
@@ -131,6 +133,8 @@ class SequentialVAE(Network):
                     distribution). Outputting the mean is correct in a regular vae (as the Max Likelihood estimate), 
                     however, when used in a chain, we should actually sample the variable).
         self.predict_generator_noise = should we predeict the stddev of the Gaussian output by a generator network
+        self.predict_generator_noise_as_scalar = if we should predict a scalar stddev for the samples (or if it should 
+                    be a diagonal variance).
         self.predict_generator_stddev_max = max output from predicting the stddev of the noise 
         self.predict_generator_stddev_conv_layers = number of conv layers in stddev prediction
         self.predict_generator_stddev_filter_sizes = number of filters for each conv layer in the stddev prediction network 
@@ -203,6 +207,7 @@ class SequentialVAE(Network):
         self.early_stopping_threshold = 0.0000000001
         self.regularized_steps = range(self.mc_steps)
         self.predict_latent_code = False
+        self.first_step_loss_coeff = 1.0
         self.add_improvement_maximization_loss = False
         self.latent_mean_clip = np.inf
         self.predict_latent_code_with_regularization = False    # TEMPORARY VARIABLE FOR SOME TESTS
@@ -210,7 +215,8 @@ class SequentialVAE(Network):
         self.use_uniform_prior = False 
         self.add_noise_to_chain = False
         self.predict_generator_noise = False
-        self.predict_generator_stddev_max = 0.6
+        self.predict_generator_noise_as_scalar = False
+        self.predict_generator_stddev_max = 1.0
         self.predict_generator_stddev_conv_layers = 5 # with 5x5 convs, this gives a receptive field of 1+4*5 = 21
         self.predict_generator_stddev_filter_sizes  = [5, 5, 5, 5, 5]
         self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
@@ -234,8 +240,223 @@ class SequentialVAE(Network):
 
         # Config for different netnames, where customization is needed.
         # add overides for any of the above parameters here
-        # one + five
-        if self.name == "c_homog_imp_max_var_pred":
+
+        ####
+        # 1: c_v2_diag_noise_abl
+        # 2: c_homog_no_reg_imp_max
+        # 3: c_v2_scalar_noise_abl
+        # 4: c_v2_coeff_change_abl
+        ####
+
+        #####################
+        # Single step VLAEs #
+        #####################
+        if self.name == "c_homog_one_step": #v2
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 1
+
+        ##TODO##
+        elif self.name == "m_homog_one_step":
+            self.vlae_levels = 4
+            self.vlae_latent_dims = [8, 8, 8, 8]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.image_sizes = [32, 16, 8, 4] 
+            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 1
+
+        elif self.name == "s_homog_one_step": # v1
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 1
+
+        ##TODO##
+        elif self.name == "l_homog_one_step":
+            pass
+
+        ##############
+        # V1 - Homog #
+        ##############
+        ##TODO##
+        elif self.name == "c_homog_v1":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+  
+        ##TODO##          
+        elif self.name == "m_homog_v1":
+            pass
+
+        ##TODO##            
+        elif self.name == "s_homog_v1":
+            pass
+ 
+        ##TODO##           
+        elif self.name == "l_homog_v1":
+            pass
+
+
+
+        ################
+        # V1 - Inhomog #
+        ################
+        ##TODO##
+        elif self.name == "c_inhomog_v1":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+
+
+        ##TODO##            
+        elif self.name == "m_inhomog_v1":
+            pass
+    
+        ##TODO##        
+        elif self.name == "s_inhomog_v1":
+            pass
+  
+        ##TODO##          
+        elif self.name == "l_inhomog_v1":
+            pass
+
+
+
+        ####################################
+        # Ablations (v2) (just celeba?)    #
+        # - latent regularization vs none  #
+        # - coeff for log likelihood of x1 #
+        # - improvement maximization loss  #
+        # - sampling through the chain     #
+        ####################################
+        # regularized (this is v1, but with a new dependency model)
+        elif self.name == "c_homog_reg_pred_latent": #v3 # "c_v2_reg"
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.latent_mean_clip = 32.0
+            self.predict_latent_code_with_regularization = True
+            
+
+        # no regularization
+        elif self.name == "c_homog_no_reg_pred_latent": # v5 # "c_v2_no_reg_abl
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.latent_mean_clip = 32.0
+
+
+        # no reg + changed coeff regularization
+        elif self.name == "c_v2_coeff_change_abl": 
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.latent_mean_clip = 32.0
+            self.first_step_loss_coeff = 2.0
+
+        # no reg + improvement max
+        elif self.name == "c_homog_no_reg_imp_max": #v2 #"c_v2_imp_max_abl"
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.add_improvement_maximization_loss = True
+            self.latent_mean_clip = 32.0
+
+
+        ##TODO##
+        # no reg + improvement max + changed coeff reg
+        elif self.name == "c_v2_coeff_change_and_imp_max_abl":
+            pass
+
+        # no reg + improvement max + diagonal noise
+        elif self.name == "c_v2_diag_noise_abl":
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.latent_mean_clip = 32.0
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+            self.predict_generator_stddev_max = 1.0
+
+
+        # no reg + improvement max + scalar noise
+        elif self.name == "c_v2_scalar_noise_abl"
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.latent_mean_clip = 32.0
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+            self.predict_generator_stddev_max = 1.0
+            self.predict_generator_noise_as_scalar = True
+
+
+
+
+        ###############################
+        # Best model one all datasets #
+        ###############################
+        ##TODO##
+        elif self.name == "c_final":
+            pass
+
+        ##TODO##
+        elif self.name == "m_final":
+            pass
+
+        ##TODO##
+        elif self.name == "s_final":
+            pass
+
+        ##TODO##
+        elif self.name == "l_final":
+            pass
+
+
+
+        #######
+        # Old #
+        #######
+
+        elif self.name == "c_homog_imp_max_var_pred":
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -248,17 +469,6 @@ class SequentialVAE(Network):
             self.predict_latent_code_with_regularization = True
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
-
-        elif self.name == "c_homog_no_reg_pred_latent":
-            self.vlae_latent_dims = [12, 12, 12, 12]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
-            self.share_theta_weights = True
-            self.share_phi_weights = True
-            self.mc_steps = 8
-            self.predict_latent_code = True
-            self.regularized_steps = [0]
-            self.latent_mean_clip = 32.0
 
         elif self.name == "c_homog_no_reg_pred_latent_var_pred":
             self.vlae_latent_dims = [12, 12, 12, 12]
@@ -286,24 +496,6 @@ class SequentialVAE(Network):
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
             self.predict_generator_stddev_max = 1.0
-
-
-        # two
-        elif self.name == "c_homog_one_step":
-            self.vlae_latent_dims = [12, 12, 12, 12]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
-            self.share_theta_weights = True
-            self.share_phi_weights = True
-            self.mc_steps = 1
-
-        elif self.name == "s_homog_one_step":
-            self.vlae_latent_dims = [12, 12, 12, 12]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
-            self.share_theta_weights = True
-            self.share_phi_weights = True
-            self.mc_steps = 1
 
         # three
         elif self.name == "s_homog_imp_max":
@@ -362,42 +554,6 @@ class SequentialVAE(Network):
             self.predict_latent_code_with_regularization = True
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
-
-
-        # eight
-        elif self.name == "m_homog_one_step":
-            self.vlae_levels = 4
-            self.vlae_latent_dims = [8, 8, 8, 8]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.image_sizes = [32, 16, 8, 4] 
-            self.filter_sizes = [self.data_dims[-1], 64, 128, 192, 256]
-            self.share_theta_weights = True
-            self.share_phi_weights = True
-            self.mc_steps = 1
-
-        elif self.name == "c_homog_reg_pred_latent":
-            self.vlae_latent_dims = [12, 12, 12, 12]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
-            self.share_theta_weights = True
-            self.share_phi_weights = True
-            self.mc_steps = 8
-            self.predict_latent_code = True
-            self.latent_mean_clip = 32.0
-            self.predict_latent_code_with_regularization = True
-
-        elif self.name == "c_homog_no_reg_imp_max":
-            self.vlae_latent_dims = [12, 12, 12, 12]
-            self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
-            self.share_theta_weights = True
-            self.share_phi_weights = True
-            self.mc_steps = 8
-            self.predict_latent_code = True
-            self.regularized_steps = [0]
-            self.add_improvement_maximization_loss = True
-            self.latent_mean_clip = 32.0
-
 
 
 
@@ -673,9 +829,14 @@ class SequentialVAE(Network):
             self.latents.append(latent_placeholder)
 
             # On the first step, let x_0 be uniform random noise
+            # And If we're adding noise through the chain, pass this noise into the first step of the generator network
             if step == 0:
                 generative_sample = tf.random_uniform(shape=tf.stack([tf.shape(self.input_placeholder)[0]] + self.data_dims))
                 self.generative_samples.append(generative_sample)
+                if self. add_noise_to_chain:
+                    prev_training_sample = generative_sample
+                    prev_generative_sample = generative_sample
+
 
             # Make recognition, p_phi(z_t|x), and generative, p_theta(x_t|z_t,x_t-1), networks. Append samples from them
             # latent_train = the latent variable in training mode, latent_generative = in generative mode
@@ -893,6 +1054,10 @@ class SequentialVAE(Network):
         # Add regularization. Only want to add regularization in Latent InfoMax mode on the first step
         if not self.predict_latent_code or self.predict_latent_code_with_regularization or step == 0:
             self.loss += self.reg_coeff * regularization_loss
+
+        # Scale the loss according to self.first_step_loss_coeff if it's the first step
+        if step == 0:
+            self.loss *= self.first_step_loss_coeff
 
         # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
         # to the new objective. Also make it "warm started", because it's a little unstable early on
@@ -1371,7 +1536,7 @@ class SequentialVAE(Network):
             encodings = self.compute_encodings(input_batch, step, reuse)
 
         # variable scope setup for decoding/generating
-        if self.share_theta_weights and step != 0: # network is different on step 0 (no input_batch)
+        if self.share_theta_weights and input_batch is not None: # network is different on step 0 (no input_batch)
             scope_name = "theta/generative_network"
             reuse = tf.AUTO_REUSE
         else:
@@ -1546,6 +1711,11 @@ class SequentialVAE(Network):
 
         We reshape to the same shape as the input after, and then expand dims to allow for (tf) broadcasting
 
+        To predict the stddev we stack a few conv layters on the output
+
+        If self.predict_generator_noise_As_scalar, then we're modelling the stddev as a scalar value, rather than 
+        a diagonal variance matrix. So add a final fc layer in that case
+
         :param output: the mle sample that we are going to predict the stddevs for. 
         :return: stddevs, with the same spatial dimensions as output
         """
@@ -1553,10 +1723,10 @@ class SequentialVAE(Network):
         for i in range(self.predict_generator_stddev_conv_layers):
             stddevs_pred = conv2d_bn_lrelu(stddevs_pred, self.predict_generator_stddev_filter_sizes[i], [4,4], 1)
         stddevs_pred = conv2d(stddevs_pred, num_outputs=1, kernel_size=[1,1], stride=1, activation_fn=tf.sigmoid)
-        #stddevs_shape = stddev_pred.get_shape().as_list()[1:]
-        #stddevs_pred_flat = tf.reshape(stddevs_pred, [-1, int(np.prod(stddevs_shape))])
-        #stddevs_pred_flat = layers.fully_connected(stddevs_pred_flat, int(np.prod(stddevs_shape)), activation_fn=tf.sigmoid)
-        #stddevs_pred = tf.reshape(stddevs_pred_flat, [-1] + stddevs_shape)
+        if self.predict_generator_noise_as_scalar:
+            stddevs_shape = stddev_pred.get_shape().as_list()[1:]
+            stddevs_pred_flat = tf.reshape(stddevs_pred, [-1, int(np.prod(stddevs_shape))])
+            stddevs_pred_flat = layers.fully_connected(stddevs_pred_flat, 1, activation_fn=tf.sigmoid)
         return stddevs_pred * self.predict_generator_stddev_max
 
 
