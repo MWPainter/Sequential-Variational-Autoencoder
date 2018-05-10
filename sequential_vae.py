@@ -413,7 +413,7 @@ class SequentialVAE(Network):
 
 
         # no reg + improvement max + scalar noise
-        elif self.name == "c_v2_scalar_noise_abl"
+        elif self.name == "c_v2_scalar_noise_abl":
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
