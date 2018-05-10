@@ -397,7 +397,7 @@ class SequentialVAE(Network):
             pass
 
         # no reg + improvement max + diagonal noise
-        elif self.name == "c_v2_diag_noise_abl":
+        elif self.name == "c_v2_diag_noise_abl": # v2
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -413,7 +413,7 @@ class SequentialVAE(Network):
 
 
         # no reg + improvement max + scalar noise
-        elif self.name == "c_v2_scalar_noise_abl":
+        elif self.name == "c_v2_scalar_noise_abl": # v1
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -1724,7 +1724,7 @@ class SequentialVAE(Network):
             stddevs_pred = conv2d_bn_lrelu(stddevs_pred, self.predict_generator_stddev_filter_sizes[i], [4,4], 1)
         stddevs_pred = conv2d(stddevs_pred, num_outputs=1, kernel_size=[1,1], stride=1, activation_fn=tf.sigmoid)
         if self.predict_generator_noise_as_scalar:
-            stddevs_shape = stddev_pred.get_shape().as_list()[1:]
+            stddevs_shape = stddevs_pred.get_shape().as_list()[1:]
             stddevs_pred_flat = tf.reshape(stddevs_pred, [-1, int(np.prod(stddevs_shape))])
             stddevs_pred_flat = layers.fully_connected(stddevs_pred_flat, 1, activation_fn=tf.sigmoid)
         return stddevs_pred * self.predict_generator_stddev_max
