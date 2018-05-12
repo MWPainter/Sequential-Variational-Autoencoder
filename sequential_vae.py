@@ -243,7 +243,7 @@ class SequentialVAE(Network):
 
         ####
         # 1: c_v2_diag_noise_abl
-        # 2: c_homog_no_reg_imp_max
+        # 2: 
         # 3: c_v2_scalar_noise_abl
         # 4: c_v2_coeff_change_abl
         ####
@@ -365,7 +365,7 @@ class SequentialVAE(Network):
 
 
         # no reg + changed coeff regularization
-        elif self.name == "c_v2_coeff_change_abl": 
+        elif self.name == "c_v2_coeff_change_abl": #1
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -391,10 +391,19 @@ class SequentialVAE(Network):
             self.latent_mean_clip = 32.0
 
 
-        ##TODO##
         # no reg + improvement max + changed coeff reg
         elif self.name == "c_v2_coeff_change_and_imp_max_abl":
-            pass
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.latent_mean_clip = 32.0
+            self.add_improvement_maximization_loss = True
+            self.first_step_loss_coeff = 2.0
 
         # no reg + improvement max + diagonal noise
         elif self.name == "c_v2_diag_noise_abl": # v2
@@ -413,7 +422,7 @@ class SequentialVAE(Network):
 
 
         # no reg + improvement max + scalar noise
-        elif self.name == "c_v2_scalar_noise_abl": # v3
+        elif self.name == "c_v2_scalar_noise_abl": # v4
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
