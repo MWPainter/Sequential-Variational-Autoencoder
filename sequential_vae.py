@@ -413,7 +413,7 @@ class SequentialVAE(Network):
 
 
         # no reg + improvement max + scalar noise
-        elif self.name == "c_v2_scalar_noise_abl": # v1
+        elif self.name == "c_v2_scalar_noise_abl": # v3
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -430,6 +430,12 @@ class SequentialVAE(Network):
 
 
 
+        ################
+        # Random tests #
+        ################
+
+        # TODO: test where generative samples are like 20 long rather than 8 long
+        # TODO: grads through the whole chain 
 
         ###############################
         # Best model one all datasets #
@@ -1726,7 +1732,7 @@ class SequentialVAE(Network):
         if self.predict_generator_noise_as_scalar:
             stddevs_shape = stddevs_pred.get_shape().as_list()[1:]
             stddevs_pred_flat = tf.reshape(stddevs_pred, [-1, int(np.prod(stddevs_shape))])
-            stddevs_pred_flat = layers.fully_connected(stddevs_pred_flat, 1, activation_fn=tf.sigmoid)
+            stddevs_pred = layers.fully_connected(stddevs_pred_flat, 1, activation_fn=tf.sigmoid)
         return stddevs_pred * self.predict_generator_stddev_max
 
 
