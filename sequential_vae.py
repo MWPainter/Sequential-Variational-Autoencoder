@@ -243,7 +243,7 @@ class SequentialVAE(Network):
 
         ####
         # 1: c_v2_diag_noise_abl
-        # 2: 
+        # 2: c_v2_coeff_change_and_imp_max_abl
         # 3: c_v2_scalar_noise_abl
         # 4: c_v2_coeff_change_abl
         ####
@@ -259,7 +259,7 @@ class SequentialVAE(Network):
             self.share_phi_weights = True
             self.mc_steps = 1
 
-        ##TODO##
+        ##TODO4##
         elif self.name == "m_homog_one_step":
             self.vlae_levels = 4
             self.vlae_latent_dims = [8, 8, 8, 8]
@@ -285,7 +285,7 @@ class SequentialVAE(Network):
         ##############
         # V1 - Homog #
         ##############
-        ##TODO##
+        ##TODO3##
         elif self.name == "c_homog_v1":
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
@@ -392,7 +392,7 @@ class SequentialVAE(Network):
 
 
         # no reg + improvement max + changed coeff reg
-        elif self.name == "c_v2_coeff_change_and_imp_max_abl":
+        elif self.name == "c_v2_coeff_change_and_imp_max_abl": #v1
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -443,8 +443,8 @@ class SequentialVAE(Network):
         # Random tests #
         ################
 
-        # TODO: test where generative samples are like 20 long rather than 8 long
-        # TODO: grads through the whole chain 
+        # TODO1: test where generative samples are like 20 long rather than 8 long
+        # TODO2: grads through the whole chain 
 
         ###############################
         # Best model one all datasets #
