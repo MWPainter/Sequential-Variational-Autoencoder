@@ -249,7 +249,7 @@ class SequentialVAE(Network):
         ####
         # 1: c_homog_v1
         # 2: c_v2_coeff_change_and_imp_max_abl
-        # 3: c_v2_scalar_noise_abl
+        # 3: c_v2_diag_noise_abl_constrained_highway
         # 4: c_v2_coeff_change_abl
         ####
 
@@ -399,7 +399,7 @@ class SequentialVAE(Network):
 
         #NEXT
         # no reg + changed imp max loss to be an actual L2 norm
-        elif self.name == "c_homog_no_reg_revamped_imp_max": #v1
+        elif self.name == "c_v2_revamped_imp_max_abl": #v1
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
