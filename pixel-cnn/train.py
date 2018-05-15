@@ -77,6 +77,29 @@ test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shu
 obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
 assert len(obs_shape) == 3, 'assumed right now'
 
+
+
+
+def make_pixel_cnn(hidden_state)
+    """
+    This is the code written to cannabalize OpenAI's PixelCNN, to use as a decoder in a PixelVAE
+
+    Being as lazy as possible.
+    Passing in parameters from the VAE framework
+    Translating between our input params, and the Open AI's params
+    C&P OpenAI's code to make the pixel cnn++
+    """
+    # Define OpenAI's params in terms of ours
+
+    # Make PixelCNN++
+    
+
+
+
+
+
+
+
 # data place holders
 x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
 xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in range(args.nr_gpu)]

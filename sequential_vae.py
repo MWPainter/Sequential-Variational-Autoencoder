@@ -116,7 +116,6 @@ class SequentialVAE(Network):
                     successive samples don't make enough improvement
         self.early_stopping_threshold = threshold on the L2 distance of successive samples for which we stop the chain,
                     note that we only stop early if 'self.early_stopping_mc' is true
-
         self.regularized_steps = the steps for which we should actually add a regulaizat
         self.predict_latent_code = true if we want to run the "Latent InfoMax" version of the MC. Can be used with either 
                     homogeneous or inhomeogeneous operation. This predicts the latent code using x_{t-1} rather than x 
@@ -124,6 +123,8 @@ class SequentialVAE(Network):
         self.first_step_loss_coeff = the weighting on the first step of the chain (the math suggests this should 
                     be 2.0, and not 1, surprisingly)
         self.add_improvement_maximization_loss = if we should actually add the loss for the latent info max
+        slef.add_revamped_improvement_maximization_loss = if we should add the loss for the latent info max, but, base it 
+                    off L2 distances, rather than basing it off L2 squared distances. (derived from geometric approach)
         self.latent_mean_clip = a value to clip (per dimension) the latent mean predictions, set to inf by default to 
                     not provide any clipping
         self.latent_prior_stddev = the stddev on the prior that we use for the latent space (set to 1.0 for default)
@@ -141,6 +142,8 @@ class SequentialVAE(Network):
         self.noise_stddevs = an array which must be exactly of lenght 'self.mc_steps', defining the std_dev for the 
                     Gaussian noise added at each step, if 'self.add_noise_to_chain' is true. (We still want to output 
                     the MLE estimate from the whole chain, so we should set self.noise_stddevs[-1] == 0.0).
+        self.max_highway_ratio = the max ratio of a highway connection (to force the highway connection to be lower than 
+                    1.0 and force the actual generator network to learn something useful).
         self.combine_noise_method = 'concat'/'add'/'gated_add', and specifies how to add in (latent) noise into the 
                     embeddings of the autoencoder (see combined_noise for more detail)
 
@@ -209,6 +212,7 @@ class SequentialVAE(Network):
         self.predict_latent_code = False
         self.first_step_loss_coeff = 1.0
         self.add_improvement_maximization_loss = False
+        self.add_revamped_improvement_maximization_loss = False
         self.latent_mean_clip = np.inf
         self.predict_latent_code_with_regularization = False    # TEMPORARY VARIABLE FOR SOME TESTS
         self.latent_prior_stddev = 1.0
@@ -220,6 +224,7 @@ class SequentialVAE(Network):
         self.predict_generator_stddev_conv_layers = 5 # with 5x5 convs, this gives a receptive field of 1+4*5 = 21
         self.predict_generator_stddev_filter_sizes  = [5, 5, 5, 5, 5]
         self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
+        self.max_highway_ratio = 1.0
         self.combine_noise_method = "concat"
 
         # "Flat Conv Infusion" parameters
@@ -242,7 +247,7 @@ class SequentialVAE(Network):
         # add overides for any of the above parameters here
 
         ####
-        # 1: c_v2_diag_noise_abl
+        # 1: c_homog_v1
         # 2: c_v2_coeff_change_and_imp_max_abl
         # 3: c_v2_scalar_noise_abl
         # 4: c_v2_coeff_change_abl
@@ -251,10 +256,12 @@ class SequentialVAE(Network):
         #####################
         # Single step VLAEs #
         #####################
-        if self.name == "c_homog_one_step": #v2
+        ## TODO ##
+        if self.name == "c_homog_one_step": #v3
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
-            self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+            # self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512] # v2
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
             self.share_theta_weights = True
             self.share_phi_weights = True
             self.mc_steps = 1
@@ -285,8 +292,7 @@ class SequentialVAE(Network):
         ##############
         # V1 - Homog #
         ##############
-        ##TODO3##
-        elif self.name == "c_homog_v1":
+        elif self.name == "c_homog_v1": #v1
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -391,6 +397,24 @@ class SequentialVAE(Network):
             self.latent_mean_clip = 32.0
 
 
+        #NEXT
+        # no reg + changed imp max loss to be an actual L2 norm
+        elif self.name == "c_homog_no_reg_revamped_imp_max": #v1
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.add_improvement_maximization_loss = True
+            self.add_revamped_improvement_maximization_loss = True
+            self.latent_mean_clip = 32.0
+            self.latent_pred_loss_coeff = 0.01
+
+
+
         # no reg + improvement max + changed coeff reg
         elif self.name == "c_v2_coeff_change_and_imp_max_abl": #v1
             self.vlae_latent_dims = [12, 12, 12, 12]
@@ -407,6 +431,23 @@ class SequentialVAE(Network):
 
         # no reg + improvement max + diagonal noise
         elif self.name == "c_v2_diag_noise_abl": # v2
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.latent_mean_clip = 32.0
+            self.add_noise_to_chain = True
+            self.predict_generator_noise = True
+            self.predict_generator_stddev_max = 1.0
+
+
+        #NEXT
+        # same as c_v2_diag_noise_abl, but added a coeff to highway connection to for the generative model to work
+        elif self.name == "c_v2_diag_noise_abl_constrained_highway": # v1
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -445,6 +486,11 @@ class SequentialVAE(Network):
 
         # TODO1: test where generative samples are like 20 long rather than 8 long
         # TODO2: grads through the whole chain 
+
+
+        #NEXT
+        elif self.name == "c_pixelvae":
+            pass
 
         ###############################
         # Best model one all datasets #
@@ -1076,7 +1122,9 @@ class SequentialVAE(Network):
 
         # If we're  we're running in Latent InfoMax mode. We want to add a loss to optimize the phi variables according 
         # to the new objective. Also make it "warm started", because it's a little unstable early on
-        if self.add_improvement_maximization_loss and prev_training_mle is not None:
+        self.add_revamped_improvement_maximization_loss = False
+        self.revamped_improvement_maximization_coeff = 0.7
+        if (self.add_improvement_maximization_loss or self.add_revamped_improvement_maximization_loss) and prev_training_mle is not None:
             # probs of latent vars
             normal_distr = tf.contrib.distributions.MultivariateNormalDiag(latent_mean, latent_stddev)
             latent_probs = tf.exp(normal_distr.log_prob(latent_sample))
@@ -1089,7 +1137,11 @@ class SequentialVAE(Network):
             weighted_norms = norms#latent_probs * norms
 
             # set loss to be negative, so we maximize
-            latent_loss = self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
+            latent_loss = None
+            if self.add_revamped_improvement_maximization_loss:
+                latent_loss = self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(tf.sqrt(weighted_norms))
+            else:
+                latent_loss = self.reg_coeff * self.latent_pred_loss_coeff * -tf.reduce_mean(weighted_norms)
             self.improvement_maximization_loss += latent_loss
             tf.summary.scalar("improvement_maximization_loss_step_%d" % step, latent_loss)
 
@@ -1152,6 +1204,10 @@ class SequentialVAE(Network):
 
         And computes some useful sanity checks to watch in training if we're debugging, and also adds a lot of 
         tensorboard scalars for us to use
+
+        If adding an improvement maximization loss. THen we can optimize with respect to all variables, if using a normal 
+        L2 norm loss (I think! This is a test!!). Otherwise, just optimize the LATENT prediction, that is, the recognition 
+        network for the improvement maximization.
         """
         optimizer = tf.train.AdamOptimizer(self.learning_rate)
 
@@ -1189,7 +1245,8 @@ class SequentialVAE(Network):
             self.train_op = elbo_train_op
 
         else:
-            grads = optimizer.compute_gradients(self.improvement_maximization_loss, var_list=phi_vars)
+            vars_to_use = all_vars if self.add_revamped_improvement_maximization_loss else phi_vars
+            grads = optimizer.compute_gradients(self.improvement_maximization_loss, var_list=vars_to_use)
             if self.clip_grads:
                 grads = [(clip_grad_if_not_none(grad, self.clip_grad_value), var) for grad, var in grads]
             pred_latent_train_op = optimizer.apply_gradients(grads)
@@ -1588,22 +1645,22 @@ class SequentialVAE(Network):
                 cur_sample = conv2d_t_bn_relu(deconv, self.filter_sizes[level+1], [4,4], 1)
 
             # Final layer to get the output
-            output = conv2d_t(cur_sample, self.data_dims[-1], [4,4], 2, activation_fn=tf.sigmoid)
-            output = (self.dataset.range[1] - self.dataset.range[0]) * output + self.dataset.range[0]
+            conv_output = conv2d_t(cur_sample, self.data_dims[-1], [4,4], 2, activation_fn=tf.sigmoid)
+            output = (self.dataset.range[1] - self.dataset.range[0]) * conv_output + self.dataset.range[0]
 
             # If we were given encodings, create a highway/residual connection over the whole step in the chain
             # (encodings[0] = input to the inf network)
             ratio = None
             if encodings is not None:
                 ratio = conv2d_t(cur_sample, 1, [4,4], 2, activation_fn=tf.sigmoid)
-                ratio = tf.tile(ratio, (1,1,1,self.data_dims[-1]))
+                ratio = self.max_highway_ratio * tf.tile(ratio, (1,1,1,self.data_dims[-1]))
                 output = tf.multiply(ratio, output) + tf.multiply(1-ratio, encodings[0])
 
             # Now compute the stddevs for the 
             stddevs = 0
             if self.add_noise_to_chain:
                 if self.predict_generator_noise:
-                    stddevs = self.stddevs_prediction(output)
+                    stddevs = self.stddevs_prediction(conv_output)
                 else:
                     stddevs = self.noise_stddevs[step]
 
