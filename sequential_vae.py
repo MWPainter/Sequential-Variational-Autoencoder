@@ -262,14 +262,13 @@ class SequentialVAE(Network):
         # add overides for any of the above parameters here
 
         ####
-        # 1: pixelvae
+        # 1: c_pixelvae 
         # 2: ^^^^^
-        # 3: c_v2_diag_noise_abl_constrained_highway 3
+        # 3: c_v2_diag_noise_abl_constrained_highway 4
         # 4: c_v2_revamped_imp_max_abl 2
         ####
         # rerun revamped imp max, with the coefficient change
         # rerun one step homog (with samew number of filters)
-        # c_v2_diag_noise_abl_constrained_highway
         # run homog + longer generation
         # run one step on all datasets
         # run old homog on all datasets
@@ -483,9 +482,8 @@ class SequentialVAE(Network):
             self.predict_generator_stddev_max = 1.0
 
 
-        #NEXT
         # same as c_v2_diag_noise_abl, but added a coeff to highway connection to for the generative model to work
-        elif self.name == "c_v2_diag_noise_abl_constrained_highway": # v2
+        elif self.name == "c_v2_diag_noise_abl_constrained_highway": # v4
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]

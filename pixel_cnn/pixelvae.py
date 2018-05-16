@@ -65,7 +65,7 @@ class Args:
 
 
 
-def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_connection, max_highway_connection)
+def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_connection, max_highway_connection):
     """
     This is the code written to cannabalize OpenAI's PixelCNN, to use as a decoder in a PixelVAE
 
