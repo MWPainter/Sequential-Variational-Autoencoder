@@ -1417,7 +1417,10 @@ class SequentialVAE(Network):
         for i in range(self.mc_steps):
             feed_dict[self.latents[i]] = np.random.normal(size=(batch_size, self.latent_dim))
 
-        if self.add_noise_to_chain:
+        if self.two_step_pixelvae:
+            output = self.sess.run(self.generative_samples[:-1], feed_dict=feed_dict)
+            output.append(sample_from_model(self.sess, self.pixelvae_cache, feed_dict))
+        elif self.add_noise_to_chain:
             output = self.sess.run(self.generative_mles + self.generative_samples, feed_dict=feed_dict)
         else:
             output = self.sess.run(self.generative_samples, feed_dict=feed_dict)
