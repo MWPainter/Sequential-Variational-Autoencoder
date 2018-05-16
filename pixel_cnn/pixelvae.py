@@ -101,7 +101,7 @@ def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_conne
 
     # run once for data dependent initialization of parameters
     init_pass = None
-    with tf.variable_scope(scope="pixelcnn", reuse=tf.AUTO_REUSE):
+    with tf.variable_scope("pixelcnn", reuse=tf.AUTO_REUSE):
         init_pass = model(x_init, h_init, init=True, dropout_p=args.dropout_p, **model_opt)
 
     # keep track of moving average (n.b. edited code to only get pixelcnn params)
@@ -119,7 +119,7 @@ def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_conne
     test_outs = []
     for i in range(gpus):
         with tf.device('/gpu:%d' % i):
-            with tf.variable_scope(scope="pixelcnn", reuse=tf.AUTO_REUSE):
+            with tf.variable_scope("pixelcnn", reuse=tf.AUTO_REUSE):
                 train_out = model(xs[i], hs[i], ema=None, dropout_p=args.dropout_p, **model_opt)
                 train_out = nn.sample_from_discretized_mix_logistic(train_out, args.nr_logistic_mix)
                 train_outs.append(train_out)
@@ -127,7 +127,7 @@ def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_conne
                 test_out = nn.sample_from_discretized_mix_logistic(test_out, args.nr_logistic_mix)
                 test_outs.append(test_out)
 
-    with tf.variable_scope(scope="pixelcnn", reuse=tf.AUTO_REUSE):
+    with tf.variable_scope("pixelcnn", reuse=tf.AUTO_REUSE):
         # concatenate the outputs from the different gpus
         train_out = tf.concat(train_outs, axis=0)
         test_out = tf.concat(test_outs, axis=0)
