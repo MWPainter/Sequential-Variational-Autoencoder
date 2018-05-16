@@ -1630,7 +1630,7 @@ class SequentialVAE(Network):
 
 
 
-    def generator_ladder(self, input_batch, latent, step, reuse=False):
+    def generator_ladder(self, input_batch, latent, step, reuse=False, ground_truths=None):
         """
         x_t-1, z_t -> x_t
 
@@ -1668,6 +1668,7 @@ class SequentialVAE(Network):
         :param step: the current step in the markov chain
         :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
                 versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :param ground_truths: Unused here
         :return: the output sample(s) from the generative network, a stddev for the sample, and the residual connection ratio
         """
         # Compute the encodings of the input, z'_t, if we can
@@ -1738,7 +1739,7 @@ class SequentialVAE(Network):
 
 
 
-    def compute_encodings(self, input_batch, step, reuse=False, ground_truths=None):
+    def compute_encodings(self, input_batch, step, reuse=False):
         """
         Creates a network to compute the encoding of some sample(s). That is, this network encodes g_theta, and 
         produces z'_t from x_t.
@@ -1747,7 +1748,6 @@ class SequentialVAE(Network):
         :param step: the current step in the markov chain
         :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
                 versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
-        :param ground_truths: Unused here
         :return: Encodings for this given input
         """
         # variable scope setup for encoding input
