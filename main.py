@@ -83,7 +83,8 @@ else:
     exit(-1)
 
 # Construct network and trainer, then let it fly
-model = SequentialVAE(dataset, name=args.netname, batch_size=args.batch_size, logger=LOG, version=args.version, base_dir=base_dir)
+num_gpus = len(args.gpus.split(','))
+model = SequentialVAE(dataset, name=args.netname, batch_size=args.batch_size, logger=LOG, version=args.version, base_dir=base_dir, num_gpus=num_gpus)
 trainer = NoisyTrainer(model, dataset, args, LOG, base_dir)
 trainer.train()
 

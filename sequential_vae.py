@@ -1,5 +1,6 @@
 from abstract_network import *
 from scipy import misc
+from pixel_cnn.pixelvae import make_pixel_cnn, sample_from_model
 layers = tf.contrib.layers
 
 
@@ -77,7 +78,7 @@ class SequentialVAE(Network):
     "Infusion with Flat Convolutions Test". For details of how to run this and the (graphical) model, see the comments 
     for 'self.generator_flat'.
     """
-    def __init__(self, dataset, batch_size, name, logger, version, base_dir):
+    def __init__(self, dataset, batch_size, name, logger, version, base_dir, num_gpus):
         """
         Initialization of the network, defines parameters and constructs the network in tenforflow
         SEE ALSO: __init__ from abstract_network.py, which defines our superclass 'Network'
@@ -94,7 +95,15 @@ class SequentialVAE(Network):
                     'self.VLAE_levels + 1' intermediate representations (including input) and we have two for the 
                     output level (includes a fully connected layer)
 
+        (PixelVAE params)
+        (most of these are hiddent in picel_cnn.pixelvae.py)
+        self.two_step_pixelvae = a flag to indicate that we are running with the pixelvae decoder. The optimizer op is a 
+                    little different and generation is a little different. So we use this flag to indicate when we should 
+                    go things differently. FOr example, we will maintain a cache containing all of the information about 
+                    generating images. See self.generator_pixelcnn for more deets
+
         (SeqVAE params)
+
         self.share_theta_weights = indicates any networks which include weights as part of 'theta', should share 
                     parameters/weights. (I.e. if this is true, g_theta and p_theta should always be the same at every 
                     MC timestep). We could also think of this as making the 'theta' parts of the sequential vae be 
@@ -187,6 +196,7 @@ class SequentialVAE(Network):
         self.batch_size = batch_size
         self.data_dims = dataset.data_dims
         self.LOG = logger
+        self.num_gpus = num_gpus
 
         # VLAE parameters - assumes input image is square and at least a multiple of 16 (usually power of 2)
         self.vlae_levels = 4
@@ -195,6 +205,9 @@ class SequentialVAE(Network):
                             self.data_dims[0] // 4, self.data_dims[0] // 8,
                             self.data_dims[0] // 16]
         self.filter_sizes = [self.data_dims[-1], 32, 64, 128, 384, 512]
+
+        # PixelCNN parameters (most of these are hiddent in picel_cnn.pixelvae.py)
+        self.two_step_pixelvae = False
 
         # SeqVAE parameters 
         self.share_theta_weights = False
@@ -225,6 +238,7 @@ class SequentialVAE(Network):
         self.predict_generator_stddev_filter_sizes  = [5, 5, 5, 5, 5]
         self.noise_stddevs = [0.5 ** 1, 0.5 ** 2, 0.5 ** 3, 0.5 ** 4, 0.5 ** 5, 0.5 ** 6, 0.5 ** 7, 0]
         self.max_highway_ratio = 1.0
+        self.min_highway_ratio = 0.0
         self.combine_noise_method = "concat"
 
         # "Flat Conv Infusion" parameters
@@ -233,6 +247,7 @@ class SequentialVAE(Network):
                                        self.data_dims[-1]*4, self.data_dims[-1]*2, self.data_dims[-1]]
 
         # Hyperparams and training params
+        self.learning_rate_decay = 1.0
         self.learning_rate = 0.0002
         self.reg_coeff_rate = 5000.0 # 1 epoch = 1000
         self.latent_pred_loss_coeff = 0.001 # 0.5, and reduce mean did really well, but very slow...
@@ -247,11 +262,18 @@ class SequentialVAE(Network):
         # add overides for any of the above parameters here
 
         ####
-        # 1: c_homog_v1
-        # 2: c_v2_coeff_change_and_imp_max_abl
-        # 3: c_v2_diag_noise_abl_constrained_highway
-        # 4: c_v2_coeff_change_abl
+        # 1: pixelvae
+        # 2: ^^^^^
+        # 3: c_v2_diag_noise_abl_constrained_highway 3
+        # 4: c_v2_revamped_imp_max_abl 2
         ####
+        # rerun revamped imp max, with the coefficient change
+        # rerun one step homog (with samew number of filters)
+        # c_v2_diag_noise_abl_constrained_highway
+        # run homog + longer generation
+        # run one step on all datasets
+        # run old homog on all datasets
+        # run final model on all datasets
 
         #####################
         # Single step VLAEs #
@@ -399,7 +421,7 @@ class SequentialVAE(Network):
 
         #NEXT
         # no reg + changed imp max loss to be an actual L2 norm
-        elif self.name == "c_v2_revamped_imp_max_abl": #v1
+        elif self.name == "c_v2_revamped_imp_max_abl": #v2
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -412,6 +434,22 @@ class SequentialVAE(Network):
             self.add_revamped_improvement_maximization_loss = True
             self.latent_mean_clip = 32.0
             self.latent_pred_loss_coeff = 0.01
+
+        # no reg + changed imp max loss to be an actual L2 norm + changed coeff of first step, because it's important now!!
+        elif self.name == "c_v2_revamped_imp_max_abl_coeff_change": #v1
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.mc_steps = 8
+            self.predict_latent_code = True
+            self.regularized_steps = [0]
+            self.add_improvement_maximization_loss = True
+            self.add_revamped_improvement_maximization_loss = True
+            self.latent_mean_clip = 32.0
+            self.latent_pred_loss_coeff = 0.01
+            self.first_step_loss_coeff = 2.0
 
 
 
@@ -447,7 +485,7 @@ class SequentialVAE(Network):
 
         #NEXT
         # same as c_v2_diag_noise_abl, but added a coeff to highway connection to for the generative model to work
-        elif self.name == "c_v2_diag_noise_abl_constrained_highway": # v1
+        elif self.name == "c_v2_diag_noise_abl_constrained_highway": # v2
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -460,6 +498,8 @@ class SequentialVAE(Network):
             self.add_noise_to_chain = True
             self.predict_generator_noise = True
             self.predict_generator_stddev_max = 1.0
+            self.max_highway_ratio = 1.0
+            self.min_highway_ratio = 0.3
 
 
         # no reg + improvement max + scalar noise
@@ -485,12 +525,24 @@ class SequentialVAE(Network):
         ################
 
         # TODO1: test where generative samples are like 20 long rather than 8 long
-        # TODO2: grads through the whole chain 
 
 
         #NEXT
         elif self.name == "c_pixelvae":
-            pass
+            self.latent_mean_clip = 4.0
+            self.max_highway_ratio = 0.8
+            self.min_highway_ratio = 0.2
+            self.two_step_pixelvae = 2
+            self.mc_steps = 2
+            self.generator = self.generator_pixelcnn
+            self.learning_rate_decay = 0.99999
+            self.vlae_latent_dims = [12, 12, 12, 12]
+            self.latent_dim = np.sum(self.vlae_latent_dims)
+            self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
+            self.share_theta_weights = True
+            self.share_phi_weights = True
+            self.regularized_steps = [0]
+            self.first_step_loss_coeff = 2.0
 
         ###############################
         # Best model one all datasets #
@@ -832,6 +884,8 @@ class SequentialVAE(Network):
         Tensorflow variables defined here (and the subsequent function calls this function makes):
         self.input_placeholder = placeholder for the input image (= the target image + optional noise)
         self.target_placeholder =  placeholder for the target image (= input image, without any noise)
+        self.lr_placeholder = placeholder for the learning rate, so we can vary it between training steps (allowing 
+                    for learning rate decay)
         self.reg_coeff = placeholder (with default value) for the coefficient of regularization (slowly raised from zero
                     to one, to implement "warm starting"). We also use this as the coefficient for 
                     'self.latent_pred_loss', as that's a little unstable early on in training.
@@ -861,6 +915,7 @@ class SequentialVAE(Network):
         """
         self.input_placeholder = tf.placeholder(shape=[None]+self.data_dims, dtype=tf.float32, name="input_placeholder")
         self.target_placeholder = tf.placeholder(shape=[None]+self.data_dims, dtype=tf.float32, name="target_placeholder")
+        self.lr_placeholder = tf.placeholder(shape=(), dtype=tf.float32, name="learning_rate_placeholder")
         self.reg_coeff = tf.placeholder_with_default(1.0, shape=[], name="regularization_coefficient")
 
         self.latents = []
@@ -903,7 +958,7 @@ class SequentialVAE(Network):
             # latent_train = the latent variable in training mode, latent_generative = in generative mode
             latent_mean, latent_stddevs, latent_train, latent_generative = self.create_recognition_network(step=step)
             generator_network_output = self.create_generator_network(prev_training_sample, prev_generative_sample, 
-                                                                                latent_train, latent_generative, step)
+                                                                     latent_train, latent_generative, step, self.target_placeholder)
             training_mle, training_stddevs, training_sample, generative_mle, generative_sample = generator_network_output
 
             self.training_mles.append(training_mle)
@@ -977,7 +1032,7 @@ class SequentialVAE(Network):
 
 
 
-    def create_generator_network(self, last_training_sample, last_generative_sample, latent_train, latent_gen, step):
+    def create_generator_network(self, last_training_sample, last_generative_sample, latent_train, latent_gen, step, true_samples):
         """
         *Should only be called from within 'self.construct_network'*
 
@@ -1007,15 +1062,17 @@ class SequentialVAE(Network):
         :param latent_train: The latent variable, z''_t, when run in training mode
         :param latent_gen: The latent variable, z''_t, when run in generative mode
         :param step: the time step with respect to the MC
+        :param true_samples: The ground truth images, sampled from data distribution (i.e. part of the training/test set)
+                This is needed to train the PixelCNN generator.
         :return training_sample: the next training sample (for when running in training mode)
         :return generative_sample: the next generative sample (for when running int generative mode)
         """
         if step == 0:
-            training_mle, training_stddevs, _ = self.generator_first_step(None, latent_train, step)
-            generative_mle, generative_stddevs, _ = self.generator_first_step(None, latent_gen, step, reuse=True)
+            training_mle, training_stddevs, _ = self.generator_first_step(None, latent_train, step, ground_truths=true_samples)
+            generative_mle, generative_stddevs, _ = self.generator_first_step(None, latent_gen, step, reuse=True, ground_truths=true_samples)
         else:
-            training_mle, training_stddevs, resnet_ratios = self.generator(last_training_sample, latent_train, step)
-            generative_mle, generative_stddevs, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True)
+            training_mle, training_stddevs, resnet_ratios = self.generator(last_training_sample, latent_train, step, ground_truths=true_samples)
+            generative_mle, generative_stddevs, _ = self.generator(last_generative_sample, latent_gen, step, reuse=True, ground_truths=true_samples)
             if self.add_debug_tb_variables and step is not None:
                 tf.summary.scalar("resnet_gate_weight_step_%d" % step, tf.reduce_mean(resnet_ratios))
 
@@ -1209,7 +1266,7 @@ class SequentialVAE(Network):
         L2 norm loss (I think! This is a test!!). Otherwise, just optimize the LATENT prediction, that is, the recognition 
         network for the improvement maximization.
         """
-        optimizer = tf.train.AdamOptimizer(self.learning_rate)
+        optimizer = tf.train.AdamOptimizer(self.lr_placeholder)
 
         all_vars = self.get_all_weights()
         theta_vars = self.get_subset_weights("theta")
@@ -1230,8 +1287,8 @@ class SequentialVAE(Network):
             theta_elbo_grads_norm = tf.global_norm(theta_elbo_grads)
             phi_elbo_grads_norm = tf.global_norm(phi_elbo_grads)
 
-            theta_elbo_update_ratio = self.learning_rate * theta_elbo_grads_norm / theta_weights_norm
-            phi_elbo_update_ratio = self.learning_rate * phi_elbo_grads_norm / phi_weights_norm
+            theta_elbo_update_ratio = self.lr_placeholder * theta_elbo_grads_norm / theta_weights_norm
+            phi_elbo_update_ratio = self.lr_placeholder * phi_elbo_grads_norm / phi_weights_norm
 
             tf.summary.scalar("theta_weights_norm", theta_weights_norm)
             tf.summary.scalar("phi_weights_norm", phi_weights_norm)
@@ -1253,12 +1310,16 @@ class SequentialVAE(Network):
 
             if self.add_debug_tb_variables:
                 phi_latent_pred_grads_norm = tf.global_norm(list(zip(*grads))[0])
-                phi_latent_pred_update_ratio = self.learning_rate * phi_latent_pred_grads_norm / phi_weights_norm
+                phi_latent_pred_update_ratio = self.lr_placeholder * phi_latent_pred_grads_norm / phi_weights_norm
 
                 tf.summary.scalar("phi_latent_pred_grads_norm", phi_latent_pred_grads_norm)
                 tf.summary.scalar("phi_latent_pred_update_ratio", phi_latent_pred_update_ratio)
 
             self.train_op = tf.group(elbo_train_op, pred_latent_train_op)
+
+        # finally, if we're running the two step pixelvae network, then we need to group an update for the PixelCNNs exponential moving average
+        if self.two_step_pixelvae:
+            self.train_op = tf.group(self.train_op, self.pixelvae_cache['update_exp_move_avg_op'])
 
 
 
@@ -1288,12 +1349,21 @@ class SequentialVAE(Network):
         :param batch_target: The target for the network (batch_target = input_batch - (noise if any))
         :return: The reconstruction loss of the FINAL sample (i.e. how well did the network do this time?)
         """
-        self.iteration += 1
 
-        # run values through our session 
+        self.iteration += 1
+        self.learning_rate *= self.learning_rate_decay
+
+        # construct feed dict for trianing operations 
         feed_dict = {self.input_placeholder: input_batch,
+                     self.lr_placeholder: self.learning_rate,
                      self.reg_coeff: 1 - math.exp(-self.iteration / self.reg_coeff_rate),
                      self.target_placeholder: batch_target}
+
+        # if running the two step seqvae with pixel decoder, we need to run the "init_pass" before anything else, to init values in the pixelcnn
+        if self.two_step_pixelvae:
+            self.sess.run(self.pixelvae_cache['init_pass'], feed_dict=feed_dict)
+
+        # Actually run training op
         _, _, final_reconstruction_loss = self.sess.run([self.train_op, self.loss, self.final_loss], feed_dict=feed_dict)
 
         # Occasionally save the network params + write summaries to tensorboard
@@ -1653,7 +1723,7 @@ class SequentialVAE(Network):
             ratio = None
             if encodings is not None:
                 ratio = conv2d_t(cur_sample, 1, [4,4], 2, activation_fn=tf.sigmoid)
-                ratio = self.max_highway_ratio * tf.tile(ratio, (1,1,1,self.data_dims[-1]))
+                ratio = self.min_highway_ratio + (self.max_highway_ratio - self.min_highway_ratio) * tf.tile(ratio, (1,1,1,self.data_dims[-1]))
                 output = tf.multiply(ratio, output) + tf.multiply(1-ratio, encodings[0])
 
             # Now compute the stddevs for the 
@@ -1670,7 +1740,7 @@ class SequentialVAE(Network):
 
 
 
-    def compute_encodings(self, input_batch, step, reuse=False):
+    def compute_encodings(self, input_batch, step, reuse=False, ground_truths=None):
         """
         Creates a network to compute the encoding of some sample(s). That is, this network encodes g_theta, and 
         produces z'_t from x_t.
@@ -1679,6 +1749,7 @@ class SequentialVAE(Network):
         :param step: the current step in the markov chain
         :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
                 versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :param ground_truths: Unused here
         :return: Encodings for this given input
         """
         # variable scope setup for encoding input
@@ -1805,7 +1876,7 @@ class SequentialVAE(Network):
 
 
 
-    def generator_flat(self, input_batch, latent, step, reuse=False):
+    def generator_flat(self, input_batch, latent, step, reuse=False, ground_truths=None):
         """
         For the flat test, we use a graphical model of x -> z_0 -> x_0 -> x_1 -> x_2 -> ....
         where x -> z_0 -> x_0 is a VLAE
@@ -1837,6 +1908,7 @@ class SequentialVAE(Network):
         :param step: the current step in the markov chain
         :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
                 versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :param ground_truths: Unused here
         :return: the output sample(s) from the generative network, a stddev for that sample, and the residual connection ratio
         """
         if step == 0:
@@ -1861,3 +1933,39 @@ class SequentialVAE(Network):
             output = conv2d(hidden_layer, self.data_dims[-1], [4,4], 1, activation_fn=tf.sigmoid)
             output = (self.dataset.range[1] - self.dataset.range[0]) * output + self.dataset.range[0]
             return output, self.noise_stddevs[step], 0
+
+
+
+
+
+
+    def generator_pixelcnn(self, input_batch, latent, step, reuse=False, ground_truths=None):
+        """
+        Creates a pixelcnn generator. 
+        The returned output if when running the network in training mode. To run the network in a generative 
+        mode, we need to use the variables that are returned in the cache from make_pixel_cnn.
+
+        When self.two_step_pixelvae is true, the the following happens:
+            We store the cache from make_pixel_cnn in self.pixelvae_cache
+            We group the train_op with an op that updates the exponential moving average used in the pixelvae
+            We change how image generation is performed
+        
+        
+        :param input_batch: the output from the previous step (none if this is the first step) 
+        :param latent: latent variables, sampled from a unit gaussian
+        :param step: the current step in the markov chain
+        :param reuse: if we should reuse variables (n.b. we want the same variables for the training and generative 
+                versions of the generative network, so sometimes this needs to be true, even in the inhomogeneous case)
+        :param ground_truths: Ground truth images, needed as the input of the pixelcnn to train it
+        :return: the output sample(s) from the generative network, a stddev for the sample, and the residual connection ratio
+        """
+        self.two_step_pixelvae = True # just in case we forgot!
+
+        # make the pixel cnn (handles the residual connection internally)
+        pixelcnn_out, ratio, pixelcnn_cache = make_pixel_cnn(ground_truths, input_batch, latent, self.num_gpus,
+                                                             self.min_highway_connection, self.max_highway_connection)
+        self.pixelvae_cache = pixelcnn_cache
+
+        # return the output, with the highway connection ratio (note the )
+        return pixelcnn_out, 0, ratio
+
