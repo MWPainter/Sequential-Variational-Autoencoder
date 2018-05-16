@@ -90,8 +90,8 @@ def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_conne
     latent_shape = latents.get_shape().as_list()
     x_sample = tf.placeholder(tf.float32, shape=x_shape) 
     h_sample = tf.placeholder(tf.float32, shape=latent_shape) 
-    x_samples = list(tf.split(x_sample, num_or_size_of_splits=gpus))    # need to split targets to split across gpus
-    h_samples = list(tf.split(h_sample, num_or_size_of_splits=gpus))
+    x_samples = list(tf.split(x_sample, num_or_size_splits=gpus))    # need to split targets to split across gpus
+    h_samples = list(tf.split(h_sample, num_or_size_splits=gpus))
 
 
     # Make PixelCNN++
