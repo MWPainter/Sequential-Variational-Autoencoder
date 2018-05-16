@@ -5,7 +5,7 @@ The core Pixel-CNN model
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.framework.python.ops import arg_scope
-from .pixel_cnn_pp import nn
+from . import nn
 #import pixel_cnn_pp.nn as nn
 
 def model_spec(x, h=None, init=False, ema=None, dropout_p=0.5, nr_resnet=5, nr_filters=160, nr_logistic_mix=10, resnet_nonlinearity='concat_elu', energy_distance=False):
