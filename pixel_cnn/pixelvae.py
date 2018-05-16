@@ -86,7 +86,7 @@ def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_conne
     h_init = hs[0]
 
     # placeholders for when we want to run in generative mode
-    x_shape = images.get_shape().as_list()
+    x_shape = ground_images.get_shape().as_list()
     latent_shape = latents.get_shape().as_list()
     x_sample = tf.placeholder(tf.float32, shape=x_shape) 
     h_sample = tf.placeholder(tf.float32, shape=latent_shape) 
