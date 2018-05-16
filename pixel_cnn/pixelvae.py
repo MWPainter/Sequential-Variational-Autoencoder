@@ -15,8 +15,8 @@ import time
 import numpy as np
 import tensorflow as tf
 
-from pixel_cnn_pp import nn
-from pixel_cnn_pp.model import model_spec
+from .pixel_cnn_pp import nn
+from .pixel_cnn_pp.model import model_spec
 from utils import plotting
 
 
