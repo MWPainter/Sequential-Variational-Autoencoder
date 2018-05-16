@@ -80,8 +80,8 @@ def make_pixel_cnn(ground_images, prev_samples, latents, gpus, min_highway_conne
     args = Args()
 
     # Define OpenAI's params in terms of ours (kinda, hacky times meant I had to change things in how this runs)
-    xs = list(tf.split(ground_images, num_or_size_of_splits=gpus))    # need to split targets to split across gpus
-    hs = list(tf.split(latents, num_or_size_of_splits=gpus))
+    xs = list(tf.split(ground_images, num_or_size_splits=gpus))    # need to split targets to split across gpus
+    hs = list(tf.split(latents, num_or_size_splits=gpus))
     x_init = xs[0]
     h_init = hs[0]
 
