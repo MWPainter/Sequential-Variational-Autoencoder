@@ -264,7 +264,7 @@ class SequentialVAE(Network):
         ####
         # 1: c_pixelvae 
         # 2: ^^^^^
-        # 3: c_v2_diag_noise_abl_constrained_highway 4
+        # 3: c_v2_diag_noise_abl_constrained_highway 11
         # 4: c_v2_revamped_imp_max_abl 2
         ####
         # rerun revamped imp max, with the coefficient change
@@ -483,7 +483,7 @@ class SequentialVAE(Network):
 
 
         # same as c_v2_diag_noise_abl, but added a coeff to highway connection to for the generative model to work
-        elif self.name == "c_v2_diag_noise_abl_constrained_highway": # v4
+        elif self.name == "c_v2_diag_noise_abl_constrained_highway": # v11
             self.vlae_latent_dims = [12, 12, 12, 12]
             self.latent_dim = np.sum(self.vlae_latent_dims)
             self.filter_sizes = [self.data_dims[-1], 16, 32, 64, 128, 384]
@@ -1961,7 +1961,7 @@ class SequentialVAE(Network):
 
         # make the pixel cnn (handles the residual connection internally)
         pixelcnn_out, ratio, pixelcnn_cache = make_pixel_cnn(ground_truths, input_batch, latent, self.num_gpus,
-                                                             self.min_highway_connection, self.max_highway_connection)
+                                                             self.min_highway_ratio, self.max_highway_ratio)
         self.pixelvae_cache = pixelcnn_cache
 
         # return the output, with the highway connection ratio (note the )
